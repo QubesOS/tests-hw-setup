@@ -1,0 +1,87 @@
+#!/bin/sh
+
+set -e
+
+create_bootdisk() {
+    # merge with custom settings and save as a boot disk
+    rm -rf iso-tmp
+    mkdir -p iso-tmp/isolinux iso-tmp/images iso-tmp/boot/grub2
+    ipaddr=$(ip addr show dev eth0 | grep -o 'inet [0-9.]*' | cut -f 2 -d ' ')
+    label=$(blkid -o value -s LABEL "$1")
+
+    # For legacy / Heads boot:
+    if [ -f /srv/www/htdocs/qinstall/iso/isolinux/isolinux.cfg ]; then
+        sed -e 's#vmlinuz #vmlinuz inst.sshd inst.ks=http://'$ipaddr'/qinstall/ks.cfg #' \
+            -e 's# rd.live.check##' \
+            < /srv/www/htdocs/qinstall/iso/isolinux/isolinux.cfg \
+            > iso-tmp/isolinux/isolinux.cfg
+    fi
+    if [ -f /srv/www/htdocs/qinstall/iso/boot/grub2/grub.cfg ]; then
+        sed -e 's#vmlinuz #vmlinuz inst.sshd inst.ks=http://'$ipaddr'/qinstall/ks.cfg #' \
+            -e 's# rd.live.check##' \
+            < /srv/www/htdocs/qinstall/iso/boot/grub2/grub.cfg \
+            > iso-tmp/boot/grub2/grub.cfg
+    fi
+
+    # For EFI boot (need to regenerate efiboot.img):
+    cp -r /srv/www/htdocs/qinstall/iso/EFI iso-tmp/
+    sed -e 's#vmlinuz #vmlinuz inst.sshd inst.ks=http://'$ipaddr'/qinstall/ks.cfg #' \
+        -e 's# rd.live.check##' \
+        < /srv/www/htdocs/qinstall/iso/EFI/BOOT/grub.cfg \
+        > iso-tmp/EFI/BOOT/grub.cfg
+    if [ "$kernel_version" = "latest" ]; then
+        if [ -f iso-tmp/isolinux/isolinux.cfg ]; then
+            sed -i -e 's#vmlinuz#../images/pxelinux/vmlinuz-latest#' \
+                -e 's#initrd.img#../images/pxelinux/initrd-latest.img#' \
+                iso-tmp/isolinux/isolinux.cfg
+        fi
+        if [ -f iso-tmp/boot/grub2/grub.cfg ]; then
+            sed -i -e 's#pxelinux/vmlinuz #pxelinux/vmlinuz-latest #' \
+                -e 's#pxelinux/initrd.img #pxelinux/initrd-latest.img #' \
+                iso-tmp/boot/grub2/grub.cfg
+        fi
+        sed -i -e 's#vmlinuz#vmlinuz-latest#' \
+            -e 's#initrd.img#initrd-latest.img#' \
+            iso-tmp/EFI/BOOT/grub.cfg
+    fi
+    truncate -s 8M iso-tmp/images/efiboot.img
+    mkfs.vfat iso-tmp/images/efiboot.img
+    mcopy -i iso-tmp/images/efiboot.img -s iso-tmp/EFI ::
+    bootfile=isolinux/isolinux.bin
+    if [ -f /srv/www/htdocs/qinstall/iso/images/eltorito.img ]; then
+        bootfile=images/eltorito.img
+    fi
+
+    # Regenerate ISO
+    xorriso -as mkisofs -v -U -J --joliet-long -R -T \
+        -m repoview -m boot.iso \
+        -isohybrid-mbr /usr/local/lib/isolinux/isohdpfx.bin \
+        -b $bootfile -c boot.cat \
+        -no-emul-boot -boot-load-size 4 -boot-info-table \
+        -eltorito-alt-boot -e images/efiboot.img -no-emul-boot \
+        -append_partition 2 0xef iso-tmp/images/efiboot.img \
+        -e --interval:appended_partition_2:all:: \
+        -V "$label" -o bootdisk.img \
+        /srv/www/htdocs/qinstall/iso/ $PWD/iso-tmp/
+    rm -rf iso-tmp
+    # FIXME: implantisomd5
+    # fortunately Heads doesn't care
+}
+
+heads="$(jq -r .HEADS < vars.json)"
+usbboot="$(jq -r .USBBOOT < vars.json)"
+kernel_version="$(jq -r .KERNEL_VERSION < vars.json)"
+# convert "null" or "0" to empty
+if [ "$usbboot" != "1" ]; then usbboot=; fi
+if [ "$heads" = "1" ]; then usbboot=1; fi
+
+if [ -f "$1" ]; then
+    mount -t iso9660 -o ro,nodev,nosuid,noexec "$1" /srv/www/htdocs/qinstall/iso
+    if [ -n "$usbboot" -a -f /root/bootdisk.img ]; then
+        ln /root/bootdisk.img bootdisk.img
+    elif [ -n "$usbboot" ]; then
+        create_bootdisk "$1"
+    fi
+else
+	umount /srv/www/htdocs/qinstall/iso || :
+fi

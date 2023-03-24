@@ -1,0 +1,7 @@
+[Unit]
+Description=USB gadget control
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/gadget-control --storage=/var/lib/openqa/pool/{{hostid}}/bootdisk.img --socket=/var/run/usb-gadget.sock --socket-group=_openqa-worker
+KillSignal=SIGINT

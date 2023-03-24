@@ -1,0 +1,13 @@
+[Unit]
+Before=gitlab-runner.service
+
+[Service]
+Type=simple
+User=gitlab-runner
+ExecStart=/usr/bin/ssh-agent -D -a /var/lib/gitlab-runner/.ssh/ssh-auth.sock
+ExecStartPost=sleep 1
+Environment=SSH_AUTH_SOCK=/var/lib/gitlab-runner/.ssh/ssh-auth.sock
+ExecStartPost=+/usr/bin/ssh-add /usr/local/openqa-cmds/test-control
+
+[Install]
+WantedBy=multi-user.target

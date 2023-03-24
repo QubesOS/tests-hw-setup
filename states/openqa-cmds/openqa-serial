@@ -1,0 +1,29 @@
+#!/bin/bash
+
+. "$(dirname "$0")/functions"
+
+hostid=1
+case "$1" in
+    --hostid=*) hostid="${1#--hostid=}"; shift ;;
+esac
+
+target_settings "$hostid"
+
+if [ "$serial" = "ttyAMA1" ]; then
+    stty -F /dev/ttyAMA1 115200 raw
+    exec cat /dev/ttyAMA1
+fi
+
+if [ "$serial" = "ttyUSB0" ]; then
+    exec /usr/local/bin/connect-serial-console /dev/ttyUSB0
+fi
+
+# defaults to tcp
+
+hostname=test-$hostid.testnet
+while true; do
+    if ! cat </dev/tcp/$hostname/1100 2>/dev/null; then
+        # wait a bit after failed connect
+        sleep 1
+    fi
+done

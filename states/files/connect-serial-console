@@ -1,0 +1,10 @@
+#!/bin/sh
+dev="$1"
+[ -n "$dev" ] || exit 1
+while ! picocom -q "$dev" 2>/dev/null; do
+    echo "*** DISCONNECTED ***"
+    while ! [ -c "$dev" ]; do
+        sleep .1
+    done
+    echo "*** RECONNECTING ***"
+done

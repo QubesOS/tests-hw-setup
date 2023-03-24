@@ -1,0 +1,66 @@
+
+get_ini_values() {
+    local path="$1"
+    local section="$2"
+    # names separated with '|'
+    local names="$3"
+
+    eval "$(awk -F ' *= *' "
+    /^\[$section\]\$/,(/^\[/ && !/^\[$section\]\$/) {
+        if (\$1 ~ /^($names)\$/)
+            print \$1 \"='\" \$2 \"'\"
+    }" "$path")"
+}
+
+target_settings() {
+    # defaults
+    hostname=test-$hostid.testnet
+    lvmpart=/dev/sda3
+    bootpart=/dev/sda2
+    efipart=/dev/sda1
+    disk=/dev/sda
+    serial=tcp
+
+    # load "disk" section from /etc/openqa/hw-control.conf
+    get_ini_values /etc/openqa/hw-control.conf disk 'bootpart|efipart|lvmpart|disk'
+    # load "serial" section from /etc/openqa/hw-control.conf
+    # for openqa-serial
+    get_ini_values /etc/openqa/hw-control.conf console 'serial'
+}
+
+thor() {
+    ssh -o UserKnownHostsFile=/usr/local/openqa-cmds/thor-known-hosts control@thor "$@"
+}
+
+ssh_target() {
+   echo "Executing $*" >&2
+   ssh -o UserKnownHostsFile=/dev/null -o StrictHostkeyChecking=no -o ConnectTimeout=5 -- root@$hostname "$@"
+}
+
+heads_boot_usb() {
+    # select "options
+    echo "down" >&9; sleep 0.1
+    echo "down" >&9; sleep 0.1
+    echo "ret" >&9; sleep 0.5
+    # select "boot options"
+    echo "ret" >&9; sleep 0.5
+    # select "USB boot"
+    echo "down" >&9; sleep 0.1
+    echo "ret" >&9
+    # let it scan
+    sleep 10
+    #confirm
+    echo "ret" >&9
+}
+
+wait_boot() {
+    timeout=90
+    while ! ssh_target true 2>/dev/null; do
+        sleep 3
+        timeout=$(( timeout - 1 ))
+        if [ $timeout -le 0 ]; then
+            echo "Boot timeout" >&2
+            return 1
+        fi
+    done
+}

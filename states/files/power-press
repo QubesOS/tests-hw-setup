@@ -1,0 +1,70 @@
+#!/usr/bin/python3
+
+# Drive servo motor connected or a switch via GPIO to press a power button on
+# another computer.
+# The first argument is button name, the second is press type (short/long).
+
+import RPi.GPIO as GPIO
+import time
+import sys
+import os
+import configparser
+
+
+def load_config():
+    config = configparser.ConfigParser()
+    config.read('/etc/openqa/hw-control.conf')
+    return config["buttons"]
+
+def servo(pin, idle_pos, press_pos, press_time):
+    pin = int(pin)
+    idle_pos, press_pos = float(idle_pos), float(press_pos)
+    GPIO.setmode(GPIO.BCM)
+    GPIO.setup(pin, GPIO.OUT)
+    p = GPIO.PWM(pin, 50) # GPIO x for PWM with 50Hz
+
+    p.start(press_pos) # Initialization
+    time.sleep(press_time)
+    p.ChangeDutyCycle(idle_pos)
+    time.sleep(0.2)
+    p.stop()
+    GPIO.cleanup()
+
+def switch(pin, idle_state, press_state, press_time):
+    pin = int(pin)
+    idle_state, press_state = int(idle_state), int(press_state)
+    GPIO.setmode(GPIO.BCM)
+    GPIO.setup(pin, GPIO.OUT)
+    GPIO.output(pin, press_state)
+    time.sleep(press_time)
+    GPIO.output(pin, idle_state)
+    GPIO.cleanup()
+
+def main():
+    button = sys.argv[1]
+
+    if button == 'ssh':
+        button = os.environ['SSH_ORIGINAL_COMMAND'] or 'power'
+
+    press_time = 1
+    try:
+        if sys.argv[2] == 'long':
+            press_time = 5
+    except IndexError:
+        pass
+
+    config = load_config()
+    try:
+        config_line = config[button]
+    except KeyError:
+        print('Unsupported dvice/button')
+        sys.exit(1)
+
+    button_type, gpio_pin, idle_state, press_state = config_line.split(' ')
+    if button_type == 'servo':
+        servo(gpio_pin, idle_state, press_state, press_time)
+    elif button_type == 'switch':
+        switch(gpio_pin, idle_state, press_state, press_time)
+
+if __name__ == '__main__':
+    main()

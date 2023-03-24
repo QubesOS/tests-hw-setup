@@ -1,0 +1,15 @@
+root_dir: .
+pki_dir: ./salt/pki/master
+gpg_keydir: ./salt/gpgkeys/
+cachedir: /tmp/salt/cache/salt/master
+ssh_log_file: log/ssh
+state_output: changes
+file_roots:
+  base:
+   - states
+
+pillar_roots:
+  base:
+   - pillar
+
+extra_filerefs: []

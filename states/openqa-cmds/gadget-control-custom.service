@@ -1,0 +1,9 @@
+[Unit]
+Description=USB gadget control (custom boot)
+# do not start if openqa job is running
+ConditionPathExistsGlob=!/var/lib/openqa/pool/*/job.json
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/gadget-control --storage=/home/customboot/bootdisk.img --socket=/var/run/usb-gadget.sock --socket-group=customboot
+KillSignal=SIGINT

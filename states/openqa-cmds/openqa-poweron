@@ -1,0 +1,36 @@
+#!/bin/sh
+
+bootmode=normal
+# this is called in the worker dir
+iso="$(jq -r .ISO < vars.json)"
+if [ -n "$iso" -a "$iso" != "null" ]; then
+    assetdir="$(jq -r .ASSETDIR < vars.json)"
+    iso_path="$assetdir/iso/$iso"
+    if ! [ -f "$iso_path" ]; then
+        prjdir="$(jq -r .PRJDIR < vars.json)"
+        iso_path="$prjdir/$iso"
+    fi
+    if ! [ -f "$iso_path" ]; then
+        cachedir="/var/lib/openqa/cache/openqa.qubes-os.org"
+        iso_path="$cachedir/$iso"
+    fi
+    if ! [ -f "$iso_path" ]; then
+        echo "$iso not found!" >&2
+        exit 1
+    fi
+    echo "Mounting $iso"
+    sudo $(dirname "$0")/mount-iso "$iso_path"
+    bootmode=openqa
+fi
+echo "$*"
+
+if [ -e /tmp/is-power-on ]; then
+    ssh -o UserKnownHostsFile=/usr/local/openqa-cmds/thor-known-hosts control@thor $bootmode wake
+else
+    sudo systemctl start gadget-control.service
+    ssh -o UserKnownHostsFile=/usr/local/openqa-cmds/thor-known-hosts control@thor $bootmode poweron
+    if [ "$bootmode" = "openqa" ] && [ -x /usr/local/bin/boot-menu-interact ]; then
+        /usr/local/bin/boot-menu-interact USB
+    fi
+fi
+touch /tmp/is-power-on

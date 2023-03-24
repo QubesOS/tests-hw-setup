@@ -1,0 +1,18 @@
+### This file is managed by salt, do not edit
+
+ctrl_interface=/var/run/hostapd
+ctrl_interface_group=0
+interface=wlan0
+hw_mode=g
+channel=10
+ieee80211d=1
+country_code=DE
+ieee80211n=1
+wmm_enabled=1
+ssid={{ ap_name }}
+auth_algs=1
+wpa=2
+wpa_key_mgmt=WPA-PSK
+rsn_pairwise=CCMP
+wpa_passphrase={{ wpa_passphrase }}
+

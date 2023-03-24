@@ -1,0 +1,158 @@
+{% set is_tcp_serial = salt['pillar.get']('openqa:worker:serial', 'tcp') == 'tcp' %}
+# default settings, to mimic interactive install
+
+keyboard --vckeymap=us
+timezone --utc UTC
+
+sshpw --username root --sshkey "{{salt['pillar.get']('openqa:worker:ssh_pubkey', '')}}"
+
+%packages
+@^qubes-xfce
+#@debian
+#@whonix
+%end
+
+
+%pre
+ps aux > /tmp/pre.ps
+if grep -q 4.0 /etc/qubes-release; then
+    systemd-run --on-active=10s xrandr -display :1 --output eDP1 --mode 1024x768 --same-as HDMI1
+else
+    systemd-run --on-active=10s xrandr -display :1 --output eDP-1 --mode 1024x768 --same-as HDMI-1
+fi
+systemctl stop sshd.socket
+systemctl stop sshd.service
+systemctl restart anaconda-sshd
+%end
+
+{% if is_tcp_serial %}
+%pre
+rm -f /dev/hvc0
+mknod /dev/hvc0 p
+nc -e '/bin/cat /dev/hvc0' -k -l 1100 </dev/null >/dev/null 2>&1 &
+
+%end
+{% endif -%}
+
+# have separate tasks in separate post scripts, to have better error logging (continue with others if one fails, possibly allowing more logs to be collected)
+
+{% if salt['pillar.get']('boot:restore_efi', '') %}
+%post --nochroot
+
+#BootCurrent: 0002
+#Timeout: 0 seconds
+#BootOrder: 0004,0003,0002,0000
+#Boot0000* Setup
+#Boot0001  UEFI BootManagerMenuApp
+#Boot0002* UEFI Shell
+#Boot0003* iPXE Network Boot
+#Boot0004* Qubes OS
+
+# restore PXE-first boot order; setup must be included, otherwise firmware refuses it
+order=$(efibootmgr | awk '/{{salt['pillar.get']('boot:restore_efi')}}/{net=substr($1,5,4)} /Setup/{setup=substr($1,5,4)} END {print net "," setup}')
+efibootmgr -o "$order"
+
+# set (only) next boot to qubes
+qubes=$(efibootmgr | awk '/Qubes/{print substr($1,5,4)}')
+efibootmgr -n "$qubes"
+
+%end
+{% endif %}
+%post
+
+if grep -q 4.0 /etc/qubes-release; then
+    internal=eDP1
+    hdmi=HDMI1
+else
+    internal=eDP-1
+    hdmi=HDMI-1
+fi
+cat <<EOF >/etc/X11/xorg.conf.d/30-monitor-layout.conf
+Section "Monitor"
+    Identifier  "panel"
+    Option      "Position" "0 0"
+    Option      "PreferredMode" "1024x768"
+EndSection
+Section "Monitor"
+    Identifier  "HDMI"
+    Option      "Position" "0 0"
+    Option      "PreferredMode" "1024x768"
+EndSection
+Section "OutputClass"
+    Identifier   "PrimaryGPU"
+    # must be set explicitly, unfortunately
+    Driver       "modesetting"
+    Option       "Monitor-$internal" "panel"
+    Option       "Monitor-$hdmi" "HDMI"
+EndSection
+EOF
+
+%end
+
+%post --nochroot
+
+mkdir -p /mnt/sysimage/root/.ssh
+chmod 700 /mnt/sysimage/root/.ssh
+cp /root/.ssh/authorized_keys /mnt/sysimage/root/.ssh/
+chmod 644 /mnt/sysimage/root/.ssh/authorized_keys
+mkdir -p /mnt/sysimage/etc/ssh/sshd_config.d
+echo "PasswordAuthentication no" > /mnt/sysimage/etc/ssh/sshd_config.d/80-test.conf
+
+%end
+
+%post
+
+cat >/usr/local/bin/post-setup <<__END__
+#!/bin/sh
+
+set -e
+set -x
+qvm-run -p --nogui -- sys-net nm-online -t 300
+qubes-dom0-update -y openssh-server
+systemctl enable --now sshd
+if [ -d /etc/qubes/policy.d ]; then
+    printf 'qubes.ConnectTCP +22 sys-net dom0 allow\n' >> /etc/qubes/policy.d/30-openqa.policy
+{%- if is_tcp_serial %}
+    printf 'qubes.ConnectTCP +1100 sys-net dom0 allow\n' >> /etc/qubes/policy.d/30-openqa.policy
+{% endif %}
+else
+{%- if is_tcp_serial %}
+    printf 'sys-net dom0 allow\n' > /etc/qubes-rpc/policy/qubes.ConnectTCP+1100
+{% endif %}
+    printf 'sys-net dom0 allow\n' > /etc/qubes-rpc/policy/qubes.ConnectTCP+22
+fi
+{%- if is_tcp_serial %}
+cat > /etc/qubes-rpc/qubes.ConnectTCP+1100 <<EOF
+#!/bin/sh
+
+cat /dev/ttyS0
+EOF
+chmod +x /etc/qubes-rpc/qubes.ConnectTCP+1100
+{% endif %}
+
+qvm-run --nogui -u root -p sys-net 'cat >>/rw/config/rc.local' <<EOF
+iptables -I INPUT -p tcp --dport 22 -j ACCEPT
+qvm-connect-tcp 22:dom0:22
+{%- if is_tcp_serial %}
+iptables -I INPUT -p tcp --dport 1100 -j ACCEPT
+qvm-connect-tcp 1100:dom0:1100
+{% endif %}
+EOF
+qvm-run --nogui -u root sys-net '/rw/config/rc.local </dev/null &>/dev/null'
+systemctl disable post-setup.service
+__END__
+chmod +x /usr/local/bin/post-setup
+
+cat >/etc/systemd/system/post-setup.service <<__END__
+[Unit]
+After=initial-setup.service
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/post-setup
+[Install]
+WantedBy=multi-user.target
+__END__
+systemctl enable post-setup.service
+echo enable post-setup.service >> /usr/lib/systemd/system-preset/30-openqa.preset
+
+%end

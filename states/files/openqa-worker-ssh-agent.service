@@ -1,0 +1,13 @@
+[Unit]
+Before=openqa-worker.target
+
+[Service]
+Type=simple
+User=_openqa-worker
+ExecStart=/usr/bin/ssh-agent -D -a /var/run/openqa/ssh-auth.sock
+ExecStartPost=sleep 1
+Environment=SSH_AUTH_SOCK=/var/run/openqa/ssh-auth.sock
+ExecStartPost=/usr/bin/ssh-add /usr/local/openqa-cmds/test-control
+
+[Install]
+WantedBy=multi-user.target
