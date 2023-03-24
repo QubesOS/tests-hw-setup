@@ -1,0 +1,254 @@
+#!/bin/sh
+
+set -e
+
+target="$1"
+if ! [ "$target" -gt 0 ]; then
+    echo "Invalid target $target! Must be in 1-4 range" >&2
+    exit 1
+fi
+shift
+
+if [ "$1" = "ssh" ]; then
+    commands=$(echo "$SSH_ORIGINAL_COMMAND" | grep -o '[a-z ]*'|head -n 1)
+else
+    commands="$*"
+fi
+
+bootconfdir=/srv/tftp/grub2-efi
+lockdir=/run/testbed-control
+
+mkdir -p "$lockdir"
+
+logger -- "testbed-control $target: $commands"
+
+# if changing this, adjust lock() function too
+LOCK_FD=9
+
+# POSIX shell doesn't support variable substitution in exec $fd<>...
+if [ -e "/proc/self/fd/$LOCK_FD" ]; then
+    echo "FD $LOCK_FD busy, cannot continue" >&2
+    exit 1
+fi
+
+lock() {
+    local what="$1"
+    [ -n "$what" ]
+    # 9 is $LOCK_FD
+    [ 9 -eq "$LOCK_FD" ]
+    exec 9>"$lockdir/$what"
+    flock "$LOCK_FD"
+}
+
+get_powerstrip_arg() {
+    case "$1" in
+        1|2|3|4) echo "-D 01:01:5f:1d:11" ;;
+        5|6|7|8) echo "-D 01:01:4f:5f:06" ;;
+        9|10|11|12) echo "-D 01:01:4b:98:f1" ;;
+        *) echo "UNKNOWN PORT $1!" >&2; echo "-D INVALID" ;;
+    esac
+}
+
+get_outlet_arg() {
+    echo "$(( ( $1 - 1 ) % 4 + 1 ))"
+}
+
+get_current_mode() {
+    if ! [ -e "$bootconfdir/testbed${1}-default" ]; then
+        echo "Boot mode for $1 not set!" >&2
+        return 1
+    fi
+    local link
+    link=$(readlink "$bootconfdir/testbed${1}-default")
+    echo ${link#env-boot-}
+}
+
+cmd_poweroff() {
+    lock "power"
+    echo -n "Powering off $1... "
+    sispmctl $(get_powerstrip_arg "$1") -f $(get_outlet_arg "$1")
+    stripes "$1" "off" || :
+}
+
+cmd_poweron() {
+    lock "power"
+    echo -n "Powering on $1... "
+
+    sispmctl $(get_powerstrip_arg "$1") -o $(get_outlet_arg "$1")
+    if [ "$1" -eq 2 ]; then
+        sleep 5
+        ssh control@hal900${1}.testnet power
+    fi
+    if [ "$1" -eq 3 ]; then
+        sleep 3
+        power-press 3 short
+    fi
+    if [ "$1" -eq 4 ]; then
+        sleep 3
+        etherwake e8:6a:64:5a:68:12
+    fi
+    if [ "$1" -eq 5 ]; then
+        sleep 3
+        power-press 5 short
+    fi
+    if [ "$1" -eq 6 ]; then
+        sleep 3
+        power-press 6 short
+    fi
+    if [ "$1" -eq 7 ]; then
+        # handle boot menu via serial...
+        if [ "$(get_current_mode "$1")" = "custom" ]; then
+            ssh console@hal900${1}.testnet boot-menu-interact USB >/dev/null
+        fi
+    fi
+    if [ "$1" -eq 8 ]; then
+        sleep 3
+        ssh control@hal900${1}.testnet power
+    fi
+    if [ "$1" -eq 9 ]; then
+        sleep 3
+        ssh control@hal900${1}.testnet power
+    fi
+    if [ "$1" -eq 10 ]; then
+        sleep 3
+        ssh control@hal90${1}.testnet power
+    fi
+    echo "done"
+    stripes "$1" "on" || :
+}
+
+cmd_reset() {
+    cmd_poweroff "$1"
+    sleep 3
+    cmd_poweron "$1"
+}
+
+cmd_wake() {
+    lock "power"
+    echo -n "Waking up $1... "
+    if [ "$1" -eq 1 ]; then
+        #etherwake 30:24:A9:90:66:FC
+        ssh control@hal900${1}.lan power
+    elif [ "$1" -eq 2 ]; then
+        #etherwake D8:BB:C1:DD:9F:D6
+        ssh control@hal900${1}.testnet power
+    elif [ "$1" -eq 4 ]; then
+        etherwake e8:6a:64:5a:68:12
+    elif [ "$1" -eq 5 ]; then
+        power-press 5 short
+    elif [ "$1" -eq 6 ]; then
+        power-press 6 short
+    elif [ "$1" -eq 7 ]; then
+        ssh control@hal900${1}.testnet power
+    elif [ "$1" -eq 8 ]; then
+        #etherwake 30:24:A9:90:66:FC
+        ssh control@hal900${1}.testnet power
+    else
+        echo "not supported"
+        return 1
+    fi
+    echo "done"
+}
+
+send_bootfiles() {
+    echo "Sending boot files for target $1"
+    hal=hal900${1}.testnet
+    if [ "$2" = "normal" ]; then
+        # just disable the thing
+        ssh customboot@$hal customboot-build </dev/null || :
+    elif [ "$2" = "custom" ]; then
+        tar c -C /srv/tftp/test${1} . | ssh customboot@$hal customboot-build
+    fi
+}
+
+cmd_switchboot() {
+    lock "power"
+    echo -n "Setting boot mode for $1 to $2... "
+    if ! [ -e "$bootconfdir/env-boot-$2" ]; then
+        echo "Invalid boot option $2" >&2
+        return 1
+    fi
+    ln -snf "env-boot-$2" "$bootconfdir/testbed$1-default"
+    echo "done"
+    case "$1" in
+        7) send_bootfiles "$1" "$2";;
+    esac
+    stripes "$1" "$2" || :
+}
+
+cmd_console() {
+    local target="$1"
+    lock "console-$1"
+    if [ "$target" = 7 ]; then
+        ssh -t console@hal900${target}.testnet picocom --send-cmd=false --receive-cmd=false -b 115200 /dev/ttyAMA1
+        return
+    elif [ "$target" = 2 ]; then
+        ssh -t console@hal900${target}.testnet picocom --send-cmd=false --receive-cmd=false -b 115200 /dev/ttyAMA1
+        return
+    elif [ "$target" = 1 ]; then
+        ssh -t console@hal900${target}.testnet connect-serial-console /dev/ttyUSB0
+        return
+    fi
+    if ! [ -c "/dev/console-test$target" ]; then
+        echo "Console for test$target is not connected";
+        return 1
+    fi
+    picocom --send-cmd=false --receive-cmd=false -b 115200 "/dev/console-test$target"
+}
+
+cmd_help() {
+    echo "Selected target: $1"
+    echo "Current boot mode: $(get_current_mode "$1")"
+    echo ""
+    echo "Available commands:"
+    echo " - reset - hard reset the target"
+    echo " - poweron - power on the target"
+    echo " - poweroff - (hard) power off the target"
+    echo " - rescue - switch next boot to rescue system (doesn't load anything from the disk)"
+    echo " - fallback - switch next boot to fallback system (loads /boot/efi/EFI/qubes/grub-fallback.cfg)"
+    echo " - normal - switch next boot to normal system"
+    echo " - custom - switch next boot to custom grub config (/srv/tftp/test$1/grub.cfg)"
+    echo " - openqa - switch next boot to openqa grub config (/srv/tftp/test$1/grub-openqa.cfg)"
+    echo " - gitlab-ci - switch next boot to gitlab-ci grub config (/srv/tftp/test$1/grub-gitlab-ci.cfg)"
+    echo " - hostkey - print SSH hostkey used by the rescue system"
+    echo " - wake - wake up the system (either wake-on-lan, or button press)"
+    echo " - console - get serial console (if available)"
+    exit 0
+}
+
+cmd_hostkey() {
+    local rescuedir=/srv/tftp/rescue
+    ls -l "$rescuedir/initrd.img"
+    if ! [ -e "$rescuedir/initrd/.extracted" ] || [ "$rescuedir/initrd.img" -nt "$rescuedir/initrd/.extracted" ]; then
+        rm -rf "$rescuedir/initrd"
+        mkdir -p "$rescuedir/initrd"
+        unmkinitramfs "$rescuedir/initrd.img" "$rescuedir/initrd"
+        touch "$rescuedir/initrd/.extracted"
+    fi
+    for f in "$rescuedir/initrd/main/etc/dropbear/"dropbear_*_host_key; do
+        dropbearkey -y -f "$f"
+    done
+}
+
+if [ -z "$commands" ]; then
+    cmd_help "$target"
+fi
+
+for cmd in $commands; do
+    case "$cmd" in
+        help) cmd_help "$target";;
+        reset) cmd_reset "$target";;
+        poweron) cmd_poweron "$target";;
+        poweroff) cmd_poweroff "$target";;
+        rescue) cmd_switchboot "$target" rescue;;
+        fallback) cmd_switchboot "$target" fallback;;
+        normal) cmd_switchboot "$target" normal;;
+        custom) cmd_switchboot "$target" custom;;
+        openqa) cmd_switchboot "$target" openqa;;
+        gitlabci) cmd_switchboot "$target" gitlabci;;
+        hostkey) cmd_hostkey;;
+        wake) cmd_wake "$target";;
+        console) cmd_console "$target";;
+        *) echo "Invalid command '$cmd'" >&2; exit 1;;
+    esac
+done
