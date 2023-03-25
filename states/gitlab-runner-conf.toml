@@ -1,6 +1,6 @@
 # This file is managed with salt *DO NOT EDIT*
 
-concurrent = 3
+concurrent = 1
 check_interval = 0
 
 [session_server]
