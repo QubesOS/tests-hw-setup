@@ -31,4 +31,4 @@ check_interval = 0
     ]
     shm_size = 0
     cpus = "2"
-    pull_policy = "if-not-present"
+    pull_policy = "always"
