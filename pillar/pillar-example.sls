@@ -24,3 +24,10 @@ boot:
 buttons:
   # example:
   power: "servo 17 4.0 1.8"
+  # PiKVMv3
+  #power: "switch 23 0 1"
+  #reset: "switch 27 0 1"
+
+system_state:
+  # example, PiKVMv3
+  power: "led 24 1"

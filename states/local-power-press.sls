@@ -23,6 +23,7 @@ RPi.GPIO:
     - separator: '='
     - sections:
         buttons: {{salt['pillar.get']('buttons') | yaml}}
+        system_state: {{salt['pillar.get']('system_state', {}) | yaml}}
 
 control:
   user.present:

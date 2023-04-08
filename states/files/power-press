@@ -14,7 +14,7 @@ import configparser
 def load_config():
     config = configparser.ConfigParser()
     config.read('/etc/openqa/hw-control.conf')
-    return config["buttons"]
+    return config
 
 def servo(pin, idle_pos, press_pos, press_time):
     pin = int(pin)
@@ -40,6 +40,23 @@ def switch(pin, idle_state, press_state, press_time):
     GPIO.output(pin, idle_state)
     GPIO.cleanup()
 
+def press(config_line, press_time):
+    button_type, gpio_pin, idle_state, press_state = config_line.split(' ')
+    if button_type == 'servo':
+        servo(gpio_pin, idle_state, press_state, press_time)
+    elif button_type == 'switch':
+        switch(gpio_pin, idle_state, press_state, press_time)
+
+def system_state(config_line):
+    state_type, gpio_pin, expected_state = config_line.split(' ')
+    gpio_pin = int(gpio_pin)
+    assert state_type == 'led'
+    GPIO.setmode(GPIO.BCM)
+    GPIO.setup(gpio_pin, GPIO.IN)
+    state = GPIO.input(gpio_pin)
+    GPIO.cleanup()
+    return state
+
 def main():
     button = sys.argv[1]
 
@@ -55,16 +72,26 @@ def main():
 
     config = load_config()
     try:
-        config_line = config[button]
+        config_line = config['buttons'][button]
     except KeyError:
         print('Unsupported dvice/button')
         sys.exit(1)
 
-    button_type, gpio_pin, idle_state, press_state = config_line.split(' ')
-    if button_type == 'servo':
-        servo(gpio_pin, idle_state, press_state, press_time)
-    elif button_type == 'switch':
-        switch(gpio_pin, idle_state, press_state, press_time)
+    press(config_line, press_time)
+
+    try:
+        state_config_line = config['system_state'][button]
+    except KeyError:
+        state_config_line = None
+        pass
+
+    if state_config_line and press_time < 5:
+        time.sleep(1)
+        # if there is a matching LED (or such), check its state and possibly
+        # retry pressing the button
+        if not system_state(state_config_line):
+            press(config_line, press_time)
+
 
 if __name__ == '__main__':
     main()
