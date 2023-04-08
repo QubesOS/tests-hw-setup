@@ -88,6 +88,7 @@ gitlab-runner:
    - restart: True
    - watch:
      - file: /var/lib/gitlab-runner/.gitlab-runner/config.toml
+     - file: /etc/systemd/system/gitlab-runner.service
   user.present:
    - home: /var/lib/gitlab-runner
    - remove_groups: False
