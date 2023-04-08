@@ -130,7 +130,7 @@ openqa-worker@{{ hostid }}:
     - enable: True
 
 # mask default openqa-worker@1 to avoid conflicts
-{% if hostid != '1' %}
+{% if hostid != 1 %}
 openqa-worker@1:
   service.masked: []
 {% endif %}
