@@ -175,6 +175,8 @@ openqa-worker-cacheservice-minion:
         _openqa-worker ALL=(root) NOPASSWD: /bin/systemctl start gadget-control.service, /bin/systemctl stop gadget-control.service
         _openqa-worker ALL=(root) NOPASSWD: /usr/local/bin/power-press
         _openqa-worker ALL=(root) NOPASSWD: /usr/local/openqa-cmds/mount-iso
+        service-control ALL=(root) NOPASSWD: /bin/systemctl start openqa-worker.target, /bin/systemctl stop openqa-worker.target
+        service-control ALL=(root) NOPASSWD: /bin/systemctl start openqa-worker-cacheservice.service, /bin/systemctl stop openqa-worker-cacheservice-minion.service
 
 /etc/openqa/hw-control.conf-openqa:
   ini.options_present:
@@ -212,11 +214,25 @@ openqa-worker-user:
         After=time-sync.target
     - makedirs: True
 
+/etc/systemd/system/openqa-worker@.service.d/claim-sut.conf:
+  file.managed:
+    - contents: |
+        [Service]
+        ExecStart=
+        ExecStart=/usr/share/openqa/script/worker --isotovideo /usr/local/bin/openqa-claim-wrap --instance %i
+    - makedirs: True
+
+/usr/local/bin/openqa-claim-wrap:
+  file.managed:
+    - source: salt://files/openqa-claim-wrap
+    - mode: 0755
+
 systemctl daemon-reload:
   cmd.run:
     - onchange:
       - file: /etc/systemd/system/openqa-worker-ssh-agent.service
       - file: /etc/systemd/system/openqa-worker@.service.d/agent.conf
+      - file: /etc/systemd/system/openqa-worker@.service.d/claim-sut.conf
 
 /usr/local/openqa-cmds/test-control:
   file.managed:
@@ -233,5 +249,21 @@ openqa-worker-ssh-agent.service:
 nginx:
   service.running:
     - enable: True
+
+service-control-user:
+  user.present:
+    - name: service-control
+    - remove_groups: False
+    - createhome: True
+
+/home/service-control/.ssh/authorized_keys:
+  file.managed:
+    - makedirs: True
+    - owner: service-control
+    - dir_mode: 0755
+    - mode: 0644
+    - contents: |
+        restrict {{salt['pillar.get']('gadget:thor_pubkey', "")}}
+
 
 #FIXME: order openqa after time sync?

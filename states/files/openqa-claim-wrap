@@ -1,0 +1,34 @@
+#!/usr/bin/perl
+
+use Fcntl;
+use Data::Dumper;
+
+my $ret = system('ssh', '-o', 'UserKnownHostsFile=/usr/local/openqa-cmds/thor-known-hosts', 'control@thor.testnet', 'claim:openqa');
+
+if ($ret != 0) {
+    die "claiming SUT failed";
+}
+
+# create a child process that waits for the parent (isotovideo) to terminate
+# via a pipe
+# do it this way so openqa-worker knows PID of the actual isotovideo process,
+# not a wrapper
+pipe my $parent, $child or die;
+# clear FD_CLOEXEC
+fcntl($child, F_SETFD, 0);
+
+my $pid = fork();
+
+if (!$pid) {
+    close $parent;
+    # launch real isotovideo
+    exec("isotovideo", @ARGV);
+    die "exec failed";
+}
+
+close $child;
+
+# wait for EOF
+read $parent, $dummy, 1;
+
+$ret = system('ssh', '-o', 'UserKnownHostsFile=/usr/local/openqa-cmds/thor-known-hosts', 'control@thor.testnet', 'release:openqa');

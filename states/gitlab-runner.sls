@@ -42,6 +42,26 @@ rpm --import /etc/pki/RPM-GPG-gitlab-runner:
 zypper --non-interactive ref:
   cmd.run: []
 
+/usr/local/bin/gitlab-runner-started.sh:
+  file.managed:
+    - contents: |
+        #!/bin/sh
+        ssh control@thor.testnet claim:gitlab
+    - mode: 0755
+
+/usr/local/bin/gitlab-runner-completed.sh:
+  file.managed:
+    - contents: |
+        #!/bin/sh
+        ssh control@thor.testnet release:gitlab
+    - mode: 0755
+
+/etc/sudoers.d/gitlab-runner:
+  file.managed:
+    - contents: |
+        service-control ALL=(root) NOPASSWD: /bin/systemctl start gitlab-runner.service, /bin/systemctl stop gitlab-runner.service
+    - mode: 0400
+
 /etc/systemd/system/gitlab-runner.service:
   file.managed:
     - contents: |
@@ -55,6 +75,7 @@ zypper --non-interactive ref:
         StartLimitBurst=10
         User=gitlab-runner
         ExecStart=/usr/bin/gitlab-runner "run" "--working-directory" "/var/lib/gitlab-runner" "--config" "/var/lib/gitlab-runner/.gitlab-runner/config.toml" "--service" "gitlab-runner" "--user" "gitlab-runner"
+        KillSignal=SIGQUIT
         Restart=always
         RestartSec=120
         EnvironmentFile=-/etc/sysconfig/gitlab-runner

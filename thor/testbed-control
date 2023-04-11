@@ -10,7 +10,7 @@ fi
 shift
 
 if [ "$1" = "ssh" ]; then
-    commands=$(echo "$SSH_ORIGINAL_COMMAND" | grep -o '[a-z ]*'|head -n 1)
+    commands=$(echo "$SSH_ORIGINAL_COMMAND" | grep -o '[a-z: ]*'|head -n 1)
 else
     commands="$*"
 fi
@@ -65,6 +65,59 @@ get_current_mode() {
     local link
     link=$(readlink "$bootconfdir/testbed${1}-default")
     echo ${link#env-boot-}
+}
+
+get_current_claim() {
+    local claimfile="$bootconfdir/testbed$1-claim"
+    if ! [ -e "$claimfile" ]; then
+        return 0
+    fi
+    head -1 "$claimfile"
+}
+
+cmd_claim() {
+    local claimfile="$bootconfdir/testbed$1-claim"
+    # supported claims
+    case "$2" in
+        (gitlab|openqa|manual) ;;
+        (*) echo "Unsupported claim: $2" >&2; exit 1;;
+    esac
+    if [ -e "$claimfile" ]; then
+        # allow re-claiming by the same entity
+        local current_claim=$(get_current_claim "$1")
+        if [ "$current_claim" = "$2" ]; then
+            return 0
+        fi
+        echo "Testbed $1 already claimed by $current_claim"
+        return 1
+    fi
+    local hal=$(hal_hostname "$1")
+    if [ "$2" != "gitlab" ]; then
+        ssh service-control@$hal sudo systemctl stop gitlab-runner.service
+    fi
+    if [ "$2" != "openqa" ]; then
+        ssh service-control@$hal sudo systemctl stop openqa-worker.target
+    fi
+    echo "$2" > "$claimfile"
+}
+
+cmd_release() {
+    local claimfile="$bootconfdir/testbed$1-claim"
+    local current_claim=$(get_current_claim "$1")
+    if [ "$current_claim" != "$2" ]; then
+        echo "Currently in use by $current_claim, not $2" >&2
+        return 1
+    fi
+    local hal=$(hal_hostname "$1")
+    if [ "$2" != "gitlab" ]; then
+        ssh service-control@$hal sudo systemctl start gitlab-runner.service
+    fi
+    if [ "$2" != "openqa" ]; then
+        ssh service-control@$hal sudo systemctl start openqa-worker.target
+        ssh service-control@$hal sudo systemctl start openqa-worker-cacheservice.service
+        ssh service-control@$hal sudo systemctl start openqa-worker-cacheservice-minion.service
+    fi
+    rm -f "$claimfile"
 }
 
 cmd_poweroff() {
@@ -206,6 +259,7 @@ cmd_console() {
 cmd_help() {
     echo "Selected target: $1"
     echo "Current boot mode: $(get_current_mode "$1")"
+    echo "Currently in use by: $(get_current_claim "$1")"
     echo ""
     echo "Available commands:"
     echo " - reset - hard reset the target"
@@ -220,6 +274,8 @@ cmd_help() {
     echo " - hostkey - print SSH hostkey used by the rescue system"
     echo " - wake - wake up the system (either wake-on-lan, or button press)"
     echo " - console - get serial console (if available)"
+    echo " - claim:name - claim the machine for given service (gitlab, openqa, manual)"
+    echo " - release:name - release claimed machine - name must match the current claim"
     exit 0
 }
 
@@ -256,6 +312,8 @@ for cmd in $commands; do
         hostkey) cmd_hostkey;;
         wake) cmd_wake "$target";;
         console) cmd_console "$target";;
+        claim:*) cmd_claim "$target" "${cmd#claim:}";;
+        release:*) cmd_release "$target" "${cmd#release:}";;
         *) echo "Invalid command '$cmd'" >&2; exit 1;;
     esac
 done
