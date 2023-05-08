@@ -366,6 +366,15 @@ def parse_and_send_cmd(gadget, line):
             parse_and_send_cmd(gadget, k)
         return
 
+    if line.startswith('cmd '):
+        string = line[len('cmd '):]
+        for k in string:
+            if k == ' ':
+                k = 'space'
+            parse_and_send_cmd(gadget, k)
+        parse_and_send_cmd(gadget, 'ret')
+        return
+
     key = line
     mods = 0
     while True:
