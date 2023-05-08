@@ -131,9 +131,11 @@ chmod +x /etc/qubes-rpc/qubes.ConnectTCP+1100
 {% endif %}
 
 qvm-run --nogui -u root -p sys-net 'cat >>/rw/config/rc.local' <<EOF
+nft add rule ip qubes custom-input tcp dport ssh accept
 iptables -I INPUT -p tcp --dport 22 -j ACCEPT
 qvm-connect-tcp 22:dom0:22
 {%- if is_tcp_serial %}
+nft add rule ip qubes custom-input tcp dport 1100 accept
 iptables -I INPUT -p tcp --dport 1100 -j ACCEPT
 qvm-connect-tcp 1100:dom0:1100
 {% endif %}
