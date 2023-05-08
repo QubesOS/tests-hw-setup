@@ -3,6 +3,12 @@
 use Fcntl;
 use Data::Dumper;
 
+# don't claim the SUT for just checking the version
+if (@ARGV[0] eq "--version") {
+    exec("isotovideo", @ARGV);
+    die "exec failed";
+}
+
 my $ret = system('ssh', '-o', 'UserKnownHostsFile=/usr/local/openqa-cmds/thor-known-hosts', 'control@thor.testnet', 'claim:openqa');
 
 if ($ret != 0) {

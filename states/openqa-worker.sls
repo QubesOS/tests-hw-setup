@@ -176,7 +176,7 @@ openqa-worker-cacheservice-minion:
         _openqa-worker ALL=(root) NOPASSWD: /usr/local/bin/power-press
         _openqa-worker ALL=(root) NOPASSWD: /usr/local/openqa-cmds/mount-iso
         service-control ALL=(root) NOPASSWD: /bin/systemctl start openqa-worker.target, /bin/systemctl stop openqa-worker.target
-        service-control ALL=(root) NOPASSWD: /bin/systemctl start openqa-worker-cacheservice.service, /bin/systemctl stop openqa-worker-cacheservice-minion.service
+        service-control ALL=(root) NOPASSWD: /bin/systemctl start openqa-worker-cacheservice.service, /bin/systemctl start openqa-worker-cacheservice-minion.service
 
 /etc/openqa/hw-control.conf-openqa:
   ini.options_present:
