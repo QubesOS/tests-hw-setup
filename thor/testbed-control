@@ -248,6 +248,9 @@ cmd_console() {
     elif [ "$target" = 1 ]; then
         ssh -t console@$hal connect-serial-console /dev/ttyUSB0
         return
+    elif [ "$target" = 11 ]; then
+        ssh -t console@$hal connect-serial-console /dev/ttyUSB0
+        return
     fi
     if ! [ -c "/dev/console-test$target" ]; then
         echo "Console for test$target is not connected";
