@@ -18,7 +18,7 @@ ps aux > /tmp/pre.ps
 if grep -q 4.0 /etc/qubes-release; then
     systemd-run --on-active=10s xrandr -display :1 --output eDP1 --mode 1024x768 --same-as HDMI1
 else
-    systemd-run --on-active=10s xrandr -display :1 --output eDP-1 --mode 1024x768 --same-as HDMI-1
+    systemd-run --on-active=10s xrandr -display :1 --output {{salt['pillar.get']('xrandr:internal-output', 'eDP-1')}} --mode 1024x768 --same-as HDMI-1
 fi
 systemctl stop sshd.socket
 systemctl stop sshd.service
@@ -64,7 +64,7 @@ if grep -q 4.0 /etc/qubes-release; then
     internal=eDP1
     hdmi=HDMI1
 else
-    internal=eDP-1
+    internal={{salt['pillar.get']('xrandr:internal-output', 'eDP-1')}}
     hdmi=HDMI-1
 fi
 cat <<EOF >/etc/X11/xorg.conf.d/30-monitor-layout.conf
