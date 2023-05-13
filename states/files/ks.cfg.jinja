@@ -16,9 +16,9 @@ sshpw --username root --sshkey "{{salt['pillar.get']('openqa:worker:ssh_pubkey',
 %pre
 ps aux > /tmp/pre.ps
 if grep -q 4.0 /etc/qubes-release; then
-    systemd-run --on-active=10s xrandr -display :1 --output eDP1 --mode 1024x768 --same-as HDMI1
+    systemd-run --on-active=15s xrandr -display :1 --output eDP1 --mode 1024x768 --same-as HDMI1
 else
-    systemd-run --on-active=10s xrandr -display :1 --output {{salt['pillar.get']('xrandr:internal-output', 'eDP-1')}} --mode 1024x768 --same-as HDMI-1
+    systemd-run --on-active=15s xrandr -display :1 --output {{salt['pillar.get']('xrandr:internal-output', 'eDP-1')}} --mode 1024x768 --same-as HDMI-1
 fi
 systemctl stop sshd.socket
 systemctl stop sshd.service
