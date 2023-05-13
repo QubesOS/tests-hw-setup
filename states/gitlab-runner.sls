@@ -91,6 +91,13 @@ zypper --non-interactive ref:
     - user: gitlab-runner
     - group: gitlab-runner
     - template: jinja
+    - require:
+      - user: gitlab-runner
+
+/var/lib/gitlab-runner/.ssh:
+  file.directory:
+    - user: gitlab-runner
+    - mode: 0700
 
 podman-pkgs:
   pkg.installed:
@@ -113,6 +120,7 @@ gitlab-runner:
   user.present:
    - home: /var/lib/gitlab-runner
    - remove_groups: False
+   - allow_uid_change: True
    - uid: 1004
 
 #gitlab-runner-register:
@@ -135,6 +143,7 @@ gitlab-runner-ssh-agent.service:
     - reload: True
     - require:
       - file: /usr/local/openqa-cmds/test-control
+      - file: /var/lib/gitlab-runner/.ssh
 
 
 # TODO:

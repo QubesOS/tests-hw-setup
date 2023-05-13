@@ -4,6 +4,7 @@ Before=gitlab-runner.service
 [Service]
 Type=simple
 User=gitlab-runner
+ExecStartPre=/bin/rm -f /var/lib/gitlab-runner/.ssh/ssh-auth.sock
 ExecStart=/usr/bin/ssh-agent -D -a /var/lib/gitlab-runner/.ssh/ssh-auth.sock
 ExecStartPost=sleep 1
 Environment=SSH_AUTH_SOCK=/var/lib/gitlab-runner/.ssh/ssh-auth.sock
