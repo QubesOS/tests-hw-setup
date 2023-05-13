@@ -128,6 +128,16 @@ cat > /etc/qubes-rpc/qubes.ConnectTCP+1100 <<EOF
 cat /dev/ttyS0
 EOF
 chmod +x /etc/qubes-rpc/qubes.ConnectTCP+1100
+
+cat > /etc/rc.d/rc.local <<EOF
+#!/bin/sh
+
+rm -f /dev/ttyS0
+mkfifo /dev/ttyS0
+chmod 666 /dev/ttyS0
+EOF
+chmod +x /etc/rc.d/rc.local
+/etc/rc.d/rc.local
 {% endif %}
 
 qvm-run --nogui -u root -p sys-net 'cat >>/rw/config/rc.local' <<EOF
