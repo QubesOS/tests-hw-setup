@@ -80,3 +80,6 @@ gitlab-runner
 
 Get runner token:
 curl --request POST "https://gitlab.com/api/v4/runners" --form "token=<registration-token>" --form "description=hal9002" --form "tag_list=hal9002"
+
+usermod --add-subuids 362144-$[ 362144 + 65536 ] gitlab-runner
+usermod --add-subgids 362144-$[ 362144 + 65536 ] gitlab-runner
