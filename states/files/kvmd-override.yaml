@@ -1,0 +1,69 @@
+####################################################################
+#                                                                  #
+# Override Pi-KVM system settings. This file uses the YAML syntax. #
+#                                                                  #
+#    https://github.com/pikvm/pikvm/blob/master/pages/config.md    #
+#                                                                  #
+# All overridden parameters will be applied AFTER other configs    #
+# and "!include" directives and BEFORE validation.                 #
+# Not: Sections should be combined under shared keys.              #
+#                                                                  #
+####################################################################
+#
+#########
+# Wrong #
+#########
+#kvmd:
+#    gpio:
+#        drivers: ...
+#kvmd:
+#    gpio:
+#        scheme: ...
+#
+###########
+# Correct #
+###########
+#kvmd:
+#    gpio:
+#        drivers: ...
+#        scheme: ...
+#
+###########
+# Example #
+###########
+#vnc:
+#    # See https://github.com/pikvm/pikvm/blob/master/pages/vnc.md
+#    keymap: /usr/share/kvmd/keymaps/ru # Set russian keymap
+#    auth:
+#        vncauth:
+#            enabled: true # Enable auth via /etc/kvmd/vncpasswd
+
+kvmd:
+  info:
+    hw:
+      vcgencmd_cmd: "/usr/local/bin/vcgencmd"
+  atx:
+    type: disabled
+  msd:
+    type: disabled
+  gpio:
+    drivers:
+      __gpio__:
+        type: cmd
+        cmd: /bin/true
+  auth:
+    enabled: false
+
+vnc:
+  auth:
+    vncauth:
+      enabled: true
+  server:
+    tls:
+      x509:
+        cert: ""
+        key: ""
+
+janus:
+  cmd:
+    - "/bin/true"

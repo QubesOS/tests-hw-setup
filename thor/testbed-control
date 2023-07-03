@@ -259,6 +259,17 @@ cmd_console() {
     picocom --send-cmd=false --receive-cmd=false -b 115200 "/dev/console-test$target"
 }
 
+cmd_vncstart() {
+    local hal=$(hal_hostname "$1")
+    ssh service-control@$hal sudo systemctl start kvmd-otg.service kvmd.service kvmd-vnc.service
+    echo "Listening on 172.16.$1.2:5900"
+}
+
+cmd_vncstop() {
+    local hal=$(hal_hostname "$1")
+    ssh service-control@$hal sudo systemctl stop kvmd-otg.service kvmd.service kvmd-vnc.service
+}
+
 cmd_help() {
     echo "Selected target: $1"
     echo "Current boot mode: $(get_current_mode "$1")"
@@ -277,6 +288,8 @@ cmd_help() {
     echo " - hostkey - print SSH hostkey used by the rescue system"
     echo " - wake - wake up the system (either wake-on-lan, or button press)"
     echo " - console - get serial console (if available)"
+    echo " - vnc:start - start VNC proxy for HDMI with USB keyboard/mouse input; do not use when openqa is running"
+    echo " - vnc:stop - stop VNC proxy"
     echo " - claim:name - claim the machine for given service (gitlab, openqa, manual)"
     echo " - release:name - release claimed machine - name must match the current claim"
     exit 0
@@ -317,6 +330,8 @@ for cmd in $commands; do
         console) cmd_console "$target";;
         claim:*) cmd_claim "$target" "${cmd#claim:}";;
         release:*) cmd_release "$target" "${cmd#release:}";;
+        vnc:start) cmd_vncstart "$target";;
+        vnc:stop) cmd_vncstop "$target";;
         *) echo "Invalid command '$cmd'" >&2; exit 1;;
     esac
 done
