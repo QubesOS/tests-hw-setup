@@ -54,7 +54,7 @@ heads_boot_usb() {
 }
 
 wait_boot() {
-    timeout=90
+    timeout=120
     while ! ssh_target true 2>/dev/null; do
         sleep 3
         timeout=$(( timeout - 1 ))

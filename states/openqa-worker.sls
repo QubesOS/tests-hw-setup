@@ -265,5 +265,27 @@ service-control-user:
     - contents: |
         restrict {{salt['pillar.get']('gadget:thor_pubkey', "")}}
 
+/etc/systemd/system/hdmi-init-edid.service:
+  file.managed:
+    - contents: |
+        [Unit]
+        Description=EDID loader for TC358743
+        Wants=dev-video0.device
+        After=dev-video0.device systemd-modules-load.service
+        
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/bin/v4l2-ctl --device=/dev/video0 --set-edid=file=/usr/local/openqa-cmds/1024x768.txt --fix-edid-checksums --info-edid
+        ExecStop=/usr/bin/v4l2-ctl --device=/dev/video0 --clear-edid
+        RemainAfterExit=true
+        
+        [Install]
+        WantedBy=multi-user.target
+
+hdmi-init-edid.service:
+  service.running:
+    - enable: True
+    - require:
+      - file: /etc/systemd/system/hdmi-init-edid.service
 
 #FIXME: order openqa after time sync?

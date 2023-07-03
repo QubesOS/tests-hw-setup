@@ -37,7 +37,7 @@ move-boot:
 /boot/vc-manual/extraconfig.txt:
   file.managed:
     - contents: |
-        dtoverlay=dwc2
+        dtoverlay=dwc2,dr_mode=peripheral
         dtoverlay=tc358743
         dtoverlay=disable-bt
         dtoverlay={{ salt['pillar.get']('uart', 'uart5') }}
