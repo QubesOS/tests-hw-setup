@@ -44,7 +44,7 @@ if [ -n "$heads" ]; then
     sleep 15
     heads_boot_usb
 elif [ -n "$usbboot" -a -x /usr/local/bin/boot-menu-interact ]; then
-    /usr/local/bin/boot-menu-interact "USB"
+    /usr/local/bin/boot-menu-interact -n 9 "USB"
 fi
 
 # give it some time to boot

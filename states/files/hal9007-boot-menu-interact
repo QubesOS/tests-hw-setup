@@ -1,28 +1,38 @@
 #!/usr/bin/python3
 
-import pexpect.fdpexpect
-import serial
+import socket
 import sys
+import time
 
-s = serial.Serial('/dev/ttyAMA1', 115200)
-console = pexpect.fdpexpect.fdspawn(s)
 
-down = "\x1b[B"
+def interact(client_send):
+    # press F2 few times, unfortunately we don't have any feedback at this point
+    for _ in range(10):
+        client_send(b"f2\n")
+        time.sleep(1)
 
-console.logfile = sys.stdout.buffer
-console.expect("F2 or Down")
-console.send(down)
-console.expect_exact("Continue")
-while console.expect_exact(["\x1b[37m\x1b[40m\x1b[11;04HBoot Manager", pexpect.TIMEOUT], timeout=1) == 1:
-    console.send(down)
-console.send("\r")
+    # wait for the menu to really show up
+    time.sleep(5)
+    # go to boot manager
+    client_send(b"down\n")
+    time.sleep(0.1)
+    client_send(b"down\n")
+    time.sleep(0.1)
+    client_send(b"ret\n")
+    time.sleep(0.1)
 
-menu_entry = sys.argv[1]
-retries = 5
-while console.expect(["\x1b\\[37m\x1b\\[40m\x1b\\[\\d+;\\d+H[a-zA-Z0-9 ]*{}".format(menu_entry), pexpect.TIMEOUT], timeout=1) == 1:
-    console.send(down)
-    retries -= 1
-    if not retries:
-        print("Failed to find '{}' menu entry".format(menu_entry), file=sys.stderr)
-        sys.exit(1)
-console.send("\r")
+    # then go to the latest boot entry and launch it
+    client_send(b"pagedown\n")
+    time.sleep(0.1)
+    client_send(b"ret\n")
+    time.sleep(0.1)
+
+if len(sys.argv) > 1 and sys.argv[1] == "-n":
+    fd = int(sys.argv[2])
+    with open(fd, "wb", buffering=0) as client:
+        interact(client.write)
+else:
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+        client.connect("/var/run/usb-gadget.sock")
+        interact(client.send)
+
