@@ -24,6 +24,8 @@ kvmd-deps:
       - libevent-devel
       - libbsd-devel
       - make
+      - patch
+      - gcc
       - python3-pygments
       - python3-setuptools
       - python3-aiofiles
@@ -40,6 +42,7 @@ kvmd-deps:
       - python3-systemd
       - python3-zstandard
       - python3-psutil
+      - python3-pipx
 
 /var/lib/pikvm-sources:
   file.directory:
@@ -100,8 +103,11 @@ https://github.com/pikvm/kvmd:
 
 kvmd-install:
   cmd.run:
-    - name: pip3 install --no-deps .
+    - name: pipx install --system-site-packages .
     - cwd: /var/lib/pikvm-sources/kvmd
+    - env:
+      - PIPX_HOME: /opt/pipx
+      - PIPX_BIN_DIR: /usr/bin
     - runas: root
     - require:
       - git: "https://github.com/pikvm/kvmd"

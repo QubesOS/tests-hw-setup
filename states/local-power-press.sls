@@ -14,6 +14,8 @@ power-press-pkgs:
 
 RPi.GPIO:
   pip.installed:
+    - extra_args:
+      - "--break-system-packages"
     - require:
       - pkg: power-press-pkgs
 
