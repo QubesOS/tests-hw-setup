@@ -44,8 +44,8 @@ kvmd:
       vcgencmd_cmd: "/usr/local/bin/vcgencmd"
   atx:
     type: disabled
-  msd:
-    type: disabled
+#  msd:
+#    type: disabled
   gpio:
     drivers:
       __gpio__:
@@ -67,3 +67,7 @@ vnc:
 janus:
   cmd:
     - "/bin/true"
+
+otg:
+  msd:
+    start: False

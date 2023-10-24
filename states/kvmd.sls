@@ -101,6 +101,11 @@ https://github.com/pikvm/kvmd:
     - require:
       - file: /var/lib/pikvm-sources
 
+/var/lib/pikvm-sources/kvmd:
+  file.patch:
+    - source: salt://files/kvmd-workarounds.patch
+    - strip: 1
+
 kvmd-install:
   cmd.run:
     - name: pipx install --system-site-packages .
@@ -116,6 +121,19 @@ kvmd-install:
 /etc/kvmd:
   file.directory:
     - mode: 755
+
+/var/lib/kvmd/msd:
+  file.directory:
+    - makedirs: True
+    - mode: 755
+
+# there must be _some_ MSD configured in fstab for kvmd-otg to work with MSD
+# enabled
+/etc/fstab-kvmd:
+  file.append:
+  - name: /etc/fstab
+  - text: |
+      /var/lib/kvmd/msd /var/lib/kvmd/msd  ext4  bind,noauto,nodev,nosuid,noexec,ro,errors=remount-ro,data=journal,X-kvmd.otgmsd-user=kvmd  0 0
 
 {% macro copy_kvmd_file(src, dst) -%}
 {{dst}}:
@@ -180,4 +198,5 @@ cp -r /var/lib/pikvm-sources/kvmd/contrib/keymaps /usr/share/kvmd/:
     - contents: |
         service-control ALL=(root) NOPASSWD: /bin/systemctl start kvmd-otg.service kvmd.service kvmd-vnc.service
         service-control ALL=(root) NOPASSWD: /bin/systemctl stop kvmd-otg.service kvmd.service kvmd-vnc.service
+        kvmd ALL=(root) NOPASSWD: /usr/bin/kvmd-helper-otgmsd-remount
 

@@ -1,0 +1,22 @@
+diff --git a/kvmd/helpers/remount/__init__.py b/kvmd/helpers/remount/__init__.py
+index 1738a90e..fe0e579c 100644
+--- a/kvmd/helpers/remount/__init__.py
++++ b/kvmd/helpers/remount/__init__.py
+@@ -107,6 +107,7 @@ def _fix_pst(part: Partition) -> None:
+ 
+ # =====
+ def main() -> None:
++    return
+     if len(sys.argv) != 2 or sys.argv[1] not in ["ro", "rw"]:
+         raise SystemExit(f"Usage: {sys.argv[0]} [ro|rw]")
+ 
+diff --git a/kvmd/helpers/remount/__main__.py b/kvmd/helpers/remount/__main__.py
+index 73bb60b3..3c81777d 100644
+--- a/kvmd/helpers/remount/__main__.py
++++ b/kvmd/helpers/remount/__main__.py
+@@ -21,4 +21,4 @@
+ 
+ 
+ from . import main
+-main()
++#main()
