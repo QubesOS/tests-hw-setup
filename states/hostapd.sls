@@ -42,17 +42,25 @@ dnsmasq:
         BOOTPROTO=static
         STARTMODE='onboot'
 
+# network.managed doesn't bring the interface either
+'ifup wlan0':
+  cmd.run: []
+
 /etc/systemd/system/dnsmasq.service.d/30_order.conf:
   file.managed:
     - contents: |
         [Unit]
         After=hostapd.service
+        [Service]
+        Restart=always
     - makedirs: True
 
 dnsmasq_service:
   service.running:
     - name: dnsmasq.service
     - enable: True
+    - require:
+      - cmd: ifup wlan0
 
 /etc/init.d/boot.local:
   file.managed:
