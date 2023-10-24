@@ -53,7 +53,7 @@ order=$(efibootmgr | awk '/{{salt['pillar.get']('boot:restore_efi')}}/{net=subst
 efibootmgr -o "$order"
 
 # set (only) next boot to qubes
-qubes=$(efibootmgr | awk '/Qubes/{print substr($1,5,4)}')
+qubes=$(efibootmgr | awk '/Qubes/{print substr($1,5,4)}'|head -n 1)
 efibootmgr -n "$qubes"
 
 %end
