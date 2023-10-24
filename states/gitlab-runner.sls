@@ -76,6 +76,7 @@ zypper --non-interactive ref:
         User=gitlab-runner
         ExecStart=/usr/bin/gitlab-runner "run" "--working-directory" "/var/lib/gitlab-runner" "--config" "/var/lib/gitlab-runner/.gitlab-runner/config.toml" "--service" "gitlab-runner" "--user" "gitlab-runner"
         KillSignal=SIGQUIT
+        TimeoutStopSec=10m
         Restart=always
         RestartSec=120
         EnvironmentFile=-/etc/sysconfig/gitlab-runner
