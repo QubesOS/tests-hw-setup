@@ -92,7 +92,7 @@ cmd_claim() {
         return 1
     fi
     local hal=$(hal_hostname "$1")
-    if [ "$2" != "gitlab" ]; then
+    if [ "$2" != "gitlab" ] && [ $1 -eq 2 ]; then
         ssh service-control@$hal sudo systemctl stop gitlab-runner.service
     fi
     if [ "$2" != "openqa" ]; then
@@ -109,7 +109,7 @@ cmd_release() {
         return 1
     fi
     local hal=$(hal_hostname "$1")
-    if [ "$2" != "gitlab" ]; then
+    if [ "$2" != "gitlab" ] && [ $1 -eq 2 ]; then
         ssh service-control@$hal sudo systemctl start gitlab-runner.service
     fi
     if [ "$2" != "openqa" ]; then
