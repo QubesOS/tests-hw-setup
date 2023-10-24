@@ -2,7 +2,7 @@ Install kernel
 --------------
 
 host=hal9004
-kver=5.15.79-ARCH+
+kver=5.15.92-ARCH+
 scp -rp ../pikvm/boot-5.15/* root@$host:/boot/
 rsync -av ../pikvm/modules-5.15/lib/modules/* root@$host:/lib/modules/
 ssh root@$host depmod $kver
