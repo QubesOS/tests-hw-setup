@@ -10,8 +10,7 @@ esac
 target_settings "$hostid"
 
 if [ "$serial" = "ttyAMA1" ]; then
-    stty -F /dev/ttyAMA1 115200 raw
-    exec cat /dev/ttyAMA1
+    exec picocom -q -b "$serial_speed" /dev/ttyAMA1
 fi
 
 if [ "$serial" = "ttyUSB0" ]; then

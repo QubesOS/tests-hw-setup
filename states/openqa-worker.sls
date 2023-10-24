@@ -95,6 +95,9 @@ workers-global:
         WIFI_PASSWORD = {{ salt['pillar.get']('hostapd:wpa_passphrase') }}
         WIFI_NAME = {{ salt['pillar.get']('hostapd:ap_name') }}
 {% endif %}
+{%- if salt['pillar.get']('openqa:worker:serial_xen_opts', '') %}
+        SERIAL_XEN_OPTS = {{ salt['pillar.get']('openqa:worker:serial_xen_opts', '') }}
+{% endif %}
 {%- for host in hosts %}
         [https://{{host}}]
         TESTPOOLSERVER = rsync://{{host}}/openqa-tests
@@ -186,6 +189,7 @@ openqa-worker-cacheservice-minion:
         disk: {{salt['pillar.get']('openqa:worker:disk_config') | yaml}}
         console:
           serial: {{salt['pillar.get']('openqa:worker:serial', 'tcp')}}
+          serial_speed: {{salt['pillar.get']('openqa:worker:serial_speed', '115200')}}
 
 openqa-worker-user:
   user.present:

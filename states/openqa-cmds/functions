@@ -20,12 +20,14 @@ target_settings() {
     efipart=/dev/sda1
     disk=/dev/sda
     serial=tcp
+    serial_speed=115200
 
     # load "disk" section from /etc/openqa/hw-control.conf
     get_ini_values /etc/openqa/hw-control.conf disk 'bootpart|efipart|lvmpart|disk'
     # load "serial" section from /etc/openqa/hw-control.conf
     # for openqa-serial
     get_ini_values /etc/openqa/hw-control.conf console 'serial'
+    get_ini_values /etc/openqa/hw-control.conf console 'serial_speed'
 }
 
 thor() {

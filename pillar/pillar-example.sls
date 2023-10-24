@@ -4,11 +4,15 @@ openqa:
      - openqa.qubes-os.org
     hostname: ...
     worker_class: ...
-    ssh_pubkey: ... pubkey of the below privkey ...
+    ssh_pubkey: ... pubkey of the privkey below ...
     ssh_key: |
       -----BEGIN OPENSSH PRIVATE KEY-----
       ...
       -----END OPENSSH PRIVATE KEY-----
+    # options: ttyUSB0, ttyAMA1, tcp (default)
+    serial: ttyAMA1
+    # optional extra xen options to setup com1
+    serial_xen_opts: com1=115200,8n1
 
   hosts:
     openqa.qubes-os.org:
