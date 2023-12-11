@@ -1,0 +1,120 @@
+#!/usr/bin/python3
+
+from dataclasses import dataclass
+import argparse
+import time
+import json
+
+from rpi_ws281x import PixelStrip, Color
+from rpi_ws281x import WS2811_STRIP_GRB
+
+# LED strip configuration:
+LED_COUNT = 150        # Number of LED pixels.
+# LED_PIN = 18          # GPIO pin connected to the pixels (18 uses PWM!).
+LED_PIN = 10        # GPIO pin connected to the pixels (10 uses SPI /dev/spidev0.0).
+LED_FREQ_HZ = 800000  # LED signal frequency in hertz (usually 800khz)
+LED_DMA = 10          # DMA channel to use for generating signal (try 10)
+LED_BRIGHTNESS = 255  # Set to 0 for darkest and 255 for brightest
+LED_INVERT = False    # True to invert the signal (when using NPN transistor level shift)
+LED_CHANNEL = 0       # set to '1' for GPIOs 13, 19, 41, 45 or 53
+LED_TYPE = WS2811_STRIP_GRB
+
+
+strip = PixelStrip(LED_COUNT, LED_PIN, LED_FREQ_HZ, LED_DMA, LED_INVERT, LED_BRIGHTNESS, LED_CHANNEL, LED_TYPE)
+
+strip.begin()
+
+def updown(strip):
+    c = Color(255, 0, 0)
+    while True:
+        for i in range(9):
+            strip.setPixelColor(i, c)
+            strip.setPixelColor(LED_COUNT-i-1, c)
+            strip.show()
+            time.sleep(0.2)
+            strip.setPixelColor(i, 0)
+            strip.setPixelColor(LED_COUNT-i-1, 0)
+        for i in range(9):
+            i = 9-i
+            strip.setPixelColor(i, c)
+            strip.setPixelColor(LED_COUNT-i-1, c)
+            strip.show()
+            time.sleep(0.2)
+            strip.setPixelColor(i, 0)
+            strip.setPixelColor(LED_COUNT-i-1, 0)
+
+hw_rows = {
+    1: [48, 49],
+    2: [36, 37, 38, 39, 40, 41],
+    3: [43, 44, 45],
+    4: [50, 51, 52],
+    5: [54, 55, 56, 57],
+    6: [24, 25, 26, 27, 28],
+    7: [20, 21, 22],
+    8: [17, 18],
+    9: [14, 15],
+    10: [11, 12],
+    11: [46, 47],
+}
+
+state_colors = {
+        'off': 0,
+        'normal': Color(0, 255, 0),
+        'rescue': Color(255, 75, 0),
+        'custom': Color(0, 0, 255),
+        'openqa': Color(0, 0, 255),
+        'gitlabci': Color(128, 0, 128),
+        'fallback': Color(0, 192, 64),
+}
+
+STATE_FILE = '/var/run/leds.state'
+
+@dataclass
+class State:
+    on: bool
+    boot: str
+
+def update_strip(strip, state):
+    for hw in hw_rows:
+        if hw not in state:
+            continue
+        current_state = state[hw].boot if state[hw].on else 'off'
+        if isinstance(hw_rows[hw], int):
+            continue
+        for row in hw_rows[hw]:
+            strip.setPixelColor(row, state_colors[current_state])
+            strip.setPixelColor(LED_COUNT-1-row, state_colors[current_state])
+    strip.show()
+    time.sleep(0.1)
+
+def set_state(hw, new_state):
+    hw = int(hw)
+    try:
+        with open(STATE_FILE) as f:
+            raw_state = json.loads(f.read())
+        # convert str keys to int
+        state = {}
+        for key in raw_state:
+            state[int(key)] = State(*raw_state[key])
+    except FileNotFoundError:
+        state = {}
+    state.setdefault(hw, State(on=False, boot='normal'))
+    if new_state in ('on', 'off'):
+        state[hw].on = new_state == 'on'
+    else:
+        assert new_state in state_colors
+        state[hw].boot = new_state
+    with open(STATE_FILE, 'w') as f:
+        f.write(json.dumps({k: (val.on, val.boot) for k, val in state.items()}, indent=4))
+
+    update_strip(strip, state)
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('hw', type=int)
+    parser.add_argument('new_state', type=str, help='One of: off, normal, rescue')
+    args = parser.parse_args()
+    set_state(args.hw, args.new_state)
+
+main()
+#updown()

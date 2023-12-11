@@ -1,0 +1,9 @@
+all: spi.dtbo
+
+spi.dtbo: spi.dts
+	dtc -I dts -O dtb -o spi.dtbo spi.dts
+
+install:
+	mkdir -p /boot/firmware/overlays
+	cp spi.dtbo /boot/firmware/overlays/
+

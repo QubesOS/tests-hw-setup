@@ -1,0 +1,6 @@
+## qubes install (with ISO mounted on the server)
+net_default_server=172.16.{{hostid}}.2
+multiboot2 (http)/qinstall/iso/images/pxeboot/xen.gz placeholder smt=off {{cmdline_xen}}
+module2 (http)/qinstall/iso/images/pxeboot/vmlinuz inst.repo=http://172.16.{{hostid}}.2/qinstall/iso plymouth.ignore-serial-consoles inst.sshd inst.ks=http://172.16.{{hostid}}.2/qinstall/ks.cfg {{cmdline_linux}}
+module2 (http)/qinstall/iso/images/pxeboot/initrd.img
+

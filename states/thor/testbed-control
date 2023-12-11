@@ -75,6 +75,13 @@ get_current_claim() {
     head -1 "$claimfile"
 }
 
+has_gitlab() {
+    case "$1" in
+        2|11) return 0;;
+        *) return 1;;
+    esac
+}
+
 cmd_claim() {
     local claimfile="$bootconfdir/testbed$1-claim"
     # supported claims
@@ -92,7 +99,7 @@ cmd_claim() {
         return 1
     fi
     local hal=$(hal_hostname "$1")
-    if [ "$2" != "gitlab" ] && [ $1 -eq 2 ]; then
+    if [ "$2" != "gitlab" ] && has_gitlab "$1"; then
         ssh service-control@$hal sudo systemctl stop gitlab-runner.service
     fi
     if [ "$2" != "openqa" ]; then
@@ -109,7 +116,7 @@ cmd_release() {
         return 1
     fi
     local hal=$(hal_hostname "$1")
-    if [ "$2" != "gitlab" ] && [ $1 -eq 2 ]; then
+    if [ "$2" != "gitlab" ] && has_gitlab "$1"; then
         ssh service-control@$hal sudo systemctl start gitlab-runner.service
     fi
     if [ "$2" != "openqa" ]; then
@@ -151,7 +158,7 @@ cmd_poweron() {
     fi
     if [ "$1" -eq 6 ]; then
         sleep 3
-        power-press 6 short
+        ssh control@$hal power
     fi
     if [ "$1" -eq 7 ]; then
         # handle boot menu via serial...
@@ -196,7 +203,7 @@ cmd_wake() {
     elif [ "$1" -eq 5 ]; then
         power-press 5 short
     elif [ "$1" -eq 6 ]; then
-        power-press 6 short
+        ssh control@$hal power
     elif [ "$1" -eq 7 ]; then
         ssh control@$hal power
     elif [ "$1" -eq 8 ]; then

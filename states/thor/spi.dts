@@ -1,0 +1,41 @@
+/dts-v1/;
+/plugin/;
+
+/ {
+    compatible = "brcm,bcm2711";
+    fragment@0 {
+        target-path = "/soc/spi@7e204000";
+        __overlay__ {
+            status = "okay";
+            #address-cells = < 0x01 >;
+            #size-cells = < 0x00 >;
+            /*
+             * The DT in RPi does not support &{/soc/dma@7e007000} format yet,
+             * so take its phandle manually and hope it won't change...
+             */
+            dmas = <0x1b 6>, <0x1b 7>;
+            dma-names = "tx", "rx";
+
+
+            spidev@0 {
+                    /*
+                    * It used to be "spidev" but Linux maintainers don't like
+                    * it, so use some other name (which has very little to do
+                    * with reality...).
+                    * See 956b200a846e324322f6211034c734c65a38e550 in Linux
+                    */
+                    compatible = "rohm,dh2228fv";
+                    reg = < 0x00 >;
+                    spi-max-frequency = < 0x7735940 >;
+                    phandle = < 0x6a >;
+            };
+
+            spidev@1 {
+                    compatible = "rohm,dh2228fv";
+                    reg = < 0x01 >;
+                    spi-max-frequency = < 0x7735940 >;
+                    phandle = < 0x6b >;
+            };
+        };
+    };
+};
