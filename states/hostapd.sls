@@ -53,6 +53,7 @@ dnsmasq:
         After=hostapd.service
         [Service]
         Restart=always
+        RestartSec=3s
     - makedirs: True
 
 dnsmasq_service:
