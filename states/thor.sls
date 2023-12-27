@@ -8,6 +8,7 @@ packages:
     - autoconf
     - automake
     - build-essential
+    - curl
     - etherwake
     - git
     - libtool
