@@ -194,6 +194,7 @@ test{{hostid}}:
       hostid: {{hostid}}
       cmdline_xen: "{{hosts[host].get("cmdline-xen", "")}}"
       cmdline_linux: "{{hosts[host].get("cmdline-linux", "")}}"
+      kernel_suffix: "{{hosts[host].get("kernel-suffix", "")}}"
 
 {% endfor %}
 
