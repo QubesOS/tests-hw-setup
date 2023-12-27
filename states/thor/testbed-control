@@ -130,7 +130,13 @@ cmd_release() {
 cmd_poweroff() {
     lock "power"
     echo -n "Powering off $1... "
-    sispmctl $(get_powerstrip_arg "$1") -f $(get_outlet_arg "$1")
+    if [ "$1" -le 12 ]; then
+        sispmctl $(get_powerstrip_arg "$1") -f $(get_outlet_arg "$1")
+    fi
+    if [ "$1" -eq 13 ]; then
+        local hal=$(hal_hostname "$1")
+        shelly-control "$hal" off
+    fi
     stripes "$1" "off" || :
 }
 
@@ -138,7 +144,9 @@ cmd_poweron() {
     lock "power"
     echo -n "Powering on $1... "
 
-    sispmctl $(get_powerstrip_arg "$1") -o $(get_outlet_arg "$1")
+    if [ "$1" -le 12 ]; then
+        sispmctl $(get_powerstrip_arg "$1") -o $(get_outlet_arg "$1")
+    fi
     local hal=$(hal_hostname "$1")
     if [ "$1" -eq 2 ]; then
         sleep 5
@@ -182,6 +190,11 @@ cmd_poweron() {
         sleep 5
         ssh control@$hal power
     fi
+    if [ "$1" -eq 13 ]; then
+        shelly-control "$hal" on
+        sleep 3
+        ssh control@$hal power
+    fi
     echo "done"
     stripes "$1" "on" || :
 }
@@ -219,6 +232,8 @@ cmd_wake() {
         #etherwake 58:47:ca:70:ce:df
         ssh service-control@$hal sudo ether-wake -i eth0 58:47:ca:70:ce:df
     elif [ "$1" -eq 12 ]; then
+        ssh control@$hal power
+    elif [ "$1" -eq 13 ]; then
         ssh control@$hal power
     else
         echo "not supported"
