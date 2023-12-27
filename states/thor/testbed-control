@@ -162,7 +162,7 @@ cmd_poweron() {
     fi
     if [ "$1" -eq 5 ]; then
         sleep 3
-        power-press 5 short
+        ssh control@$hal power
     fi
     if [ "$1" -eq 6 ]; then
         sleep 3
