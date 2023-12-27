@@ -178,6 +178,10 @@ cmd_poweron() {
         sleep 3
         ssh control@$hal power
     fi
+    if [ "$1" -eq 12 ]; then
+        sleep 5
+        ssh control@$hal power
+    fi
     echo "done"
     stripes "$1" "on" || :
 }
@@ -214,6 +218,8 @@ cmd_wake() {
     elif [ "$1" -eq 11 ]; then
         #etherwake 58:47:ca:70:ce:df
         ssh service-control@$hal sudo ether-wake -i eth0 58:47:ca:70:ce:df
+    elif [ "$1" -eq 12 ]; then
+        ssh control@$hal power
     else
         echo "not supported"
         return 1
