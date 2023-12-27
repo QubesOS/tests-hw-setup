@@ -34,7 +34,7 @@ if [ -n "$heads" ] || [ -n "$usbboot" ]; then
     rm -f input-pipe
     mkfifo input-pipe
     trap 'rm -f input-pipe' EXIT
-    sudo gadget-control --storage="/root/boot-disk-rescue2.img" < input-pipe &
+    sudo /usr/local/bin/gadget-control --storage="/root/boot-disk-rescue2.img" < input-pipe &
     exec 9>input-pipe
 fi
 
