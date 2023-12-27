@@ -59,7 +59,7 @@ https://github.com/pikvm/ustreamer:
   git.latest:
     - target: /var/lib/pikvm-sources/ustreamer
     - branch: master
-    - rev: 548c261d9237598a280db1af9f018956015a391f
+    - rev: f8ed7d7b3bf12d81b73d9c934e8b3d6b66cea24f
     - user: kvmd
     - require:
       - file: /var/lib/pikvm-sources
