@@ -218,7 +218,7 @@ cmd_wake() {
     elif [ "$1" -eq 4 ]; then
         etherwake e8:6a:64:5a:68:12
     elif [ "$1" -eq 5 ]; then
-        power-press 5 short
+        ssh control@$hal power
     elif [ "$1" -eq 6 ]; then
         ssh control@$hal power
     elif [ "$1" -eq 7 ]; then
