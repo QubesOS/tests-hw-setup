@@ -12,15 +12,12 @@ import shutil
 import asyncio
 
 
-class Gadget:
-    def __init__(self, storage_path=None, cdrom=False, hid=True):
+class BaseGadget:
+    def __init__(self, storage_path=None, cdrom=False):
         self.gadget_configfs_root = pathlib.Path("/sys/kernel/config/usb_gadget/kbd")
         self.udc = os.listdir("/sys/class/udc")[0]
-        self.mouse_dev = None
-        self.keyboard_dev = None
         self.storage_path = storage_path
         self.storage_cdrom = cdrom
-        self.hid = hid
 
     def set_sysfs_attr(self, name, value):
         path = self.gadget_configfs_root / name
@@ -46,11 +43,73 @@ class Gadget:
         self.set_sysfs_attr("configs/c.1/bmAttributes", "0x80")  # Bus powered
         self.set_sysfs_attr("configs/c.1/MaxPower", "250")
         self.set_sysfs_attr("configs/c.1/strings/0x409/configuration", "c1")
-        if self.hid:
-            self._create_keyboard_function()
-            self._create_mouse_function()
         if self.storage_path:
             self._create_storage_function()
+
+    def _create_storage_function(self):
+        p = "functions/mass_storage.usb2/lun.0/"
+        self.set_sysfs_attr(p + "cdrom", "Y" if self.storage_cdrom else "N")  # is cdrom
+        self.set_sysfs_attr(p + "ro", "1")
+        self.set_sysfs_attr(p + "file", self.storage_path)  # backing file
+        self.set_sysfs_attr(p + "removable", "1")
+        os.symlink(
+            self.gadget_configfs_root / "functions/mass_storage.usb2",
+            self.gadget_configfs_root / "configs/c.1/mass_storage.usb2",
+        )
+
+    def _get_gadget_dev(self, func):
+        with open(self.gadget_configfs_root / (func + "/dev"), "r") as f:
+            devnum = f.read()
+        return "/dev/" + os.path.basename(
+            os.readlink("/sys/dev/char/" + devnum.strip())
+        )
+
+    def enable(self):
+        with open(self.gadget_configfs_root / "UDC", "w") as f:
+            f.write(self.udc)
+
+    def disable(self):
+        with open(os.path.join(self.gadget_configfs_root, "UDC"), "w") as f:
+            f.write("\n")
+
+    def cleanup(self):
+        for d in os.listdir(self.gadget_configfs_root / "configs/c.1"):
+            if ".usb" in d:
+                os.unlink(self.gadget_configfs_root / "configs/c.1" / d)
+        for (dirpath, dirs, _files) in os.walk(
+            self.gadget_configfs_root, topdown=False
+        ):
+            for d in dirs:
+                if d in ("strings", "os_desc", "configs", "functions", "lun.0"):
+                    # Linux doesn't allow to remove this one
+                    continue
+                os.rmdir(os.path.join(dirpath, d))
+        os.rmdir(self.gadget_configfs_root)
+
+    def __enter__(self):
+        if os.path.exists(self.gadget_configfs_root):
+            # previous instance didn't cleaned up
+            self.disable()
+            self.cleanup()
+        self.create_gadget()
+        self.enable()
+        return self
+
+    def __exit__(self, exc_type, exc_value, exc_traceback):
+        self.disable()
+        self.cleanup()
+
+
+class UsbHidGadget(BaseGadget):
+    def __init__(self, storage_path=None, cdrom=False):
+        super().__init__(storage_path=storage_path, cdrom=cdrom)
+        self.mouse_dev = None
+        self.keyboard_dev = None
+
+    def create_gadget(self):
+        super().create_gadget()
+        self._create_keyboard_function()
+        self._create_mouse_function()
 
     def _create_keyboard_function(self):
         p = "functions/hid.usb0/"
@@ -177,34 +236,14 @@ class Gadget:
             self.gadget_configfs_root / "configs/c.1/hid.usb1",
         )
 
-    def _create_storage_function(self):
-        p = "functions/mass_storage.usb2/lun.0/"
-        self.set_sysfs_attr(p + "cdrom", "Y" if self.storage_cdrom else "N")  # is cdrom
-        self.set_sysfs_attr(p + "ro", "1")
-        self.set_sysfs_attr(p + "file", self.storage_path)  # backing file
-        self.set_sysfs_attr(p + "removable", "1")
-        os.symlink(
-            self.gadget_configfs_root / "functions/mass_storage.usb2",
-            self.gadget_configfs_root / "configs/c.1/mass_storage.usb2",
-        )
-
-    def _get_gadget_dev(self, func):
-        with open(self.gadget_configfs_root / (func + "/dev"), "r") as f:
-            devnum = f.read()
-        return "/dev/" + os.path.basename(
-            os.readlink("/sys/dev/char/" + devnum.strip())
-        )
-
     def enable(self):
-        with open(self.gadget_configfs_root / "UDC", "w") as f:
-            f.write(self.udc)
-        if self.hid:
-            self.keyboard_dev = open(
-                self._get_gadget_dev("functions/hid.usb0"), "wb", buffering=0
-            )
-            self.mouse_dev = open(
-                self._get_gadget_dev("functions/hid.usb1"), "wb", buffering=0
-            )
+        super().enable()
+        self.keyboard_dev = open(
+            self._get_gadget_dev("functions/hid.usb0"), "wb", buffering=0
+        )
+        self.mouse_dev = open(
+            self._get_gadget_dev("functions/hid.usb1"), "wb", buffering=0
+        )
 
     def disable(self):
         if self.keyboard_dev:
@@ -213,22 +252,7 @@ class Gadget:
         if self.mouse_dev:
             self.mouse_dev.close()
             self.mouse_dev = None
-        with open(os.path.join(self.gadget_configfs_root, "UDC"), "w") as f:
-            f.write("\n")
-
-    def cleanup(self):
-        for d in os.listdir(self.gadget_configfs_root / "configs/c.1"):
-            if ".usb" in d:
-                os.unlink(self.gadget_configfs_root / "configs/c.1" / d)
-        for (dirpath, dirs, _files) in os.walk(
-            self.gadget_configfs_root, topdown=False
-        ):
-            for d in dirs:
-                if d in ("strings", "os_desc", "configs", "functions", "lun.0"):
-                    # Linux doesn't allow to remove this one
-                    continue
-                os.rmdir(os.path.join(dirpath, d))
-        os.rmdir(self.gadget_configfs_root)
+        super().disable()
 
     def write_mouse_move_report(self, x, y, wheel=0):
         # 2 - report id - stylus
@@ -242,165 +266,166 @@ class Gadget:
         self.mouse_dev.write(report)
 
     def write_keyboard_report(self, modifiers, key):
+        mod_mask = 0
+        for mod in modifiers:
+            mod_mask |= mod
         # TODO: more keys?
-        report = struct.pack("BxxBxxxx", modifiers, key)
+        report = struct.pack("BxxBxxxx", mod_mask, key)
         self.keyboard_dev.write(report)
         self.keyboard_dev.write(b"\0" * 8)
 
-    def __enter__(self):
-        if os.path.exists(self.gadget_configfs_root):
-            # previous instance didn't cleaned up
-            self.disable()
-            self.cleanup()
-        self.create_gadget()
-        self.enable()
-        return self
 
-    def __exit__(self, exc_type, exc_value, exc_traceback):
-        self.disable()
-        self.cleanup()
+@dataclasses.dataclass(frozen=True)
+class UsbKey:
+    code: int
+    mods: tuple[int]
+
+
+@dataclasses.dataclass(frozen=True)
+class Key:
+    usb: UsbKey
 
 
 # based on Universal Serial Bus HID Usage Tables
 keycodes = {
     # key: (mods, keycode)
-    "a": (0, 0x04),
-    "A": (2, 0x04),
-    "b": (0, 0x05),
-    "B": (2, 0x05),
-    "c": (0, 0x06),
-    "C": (2, 0x06),
-    "d": (0, 0x07),
-    "D": (2, 0x07),
-    "e": (0, 0x08),
-    "E": (2, 0x08),
-    "f": (0, 0x09),
-    "F": (2, 0x09),
-    "g": (0, 0x0A),
-    "G": (2, 0x0A),
-    "h": (0, 0x0B),
-    "H": (2, 0x0B),
-    "i": (0, 0x0C),
-    "I": (2, 0x0C),
-    "j": (0, 0x0D),
-    "J": (2, 0x0D),
-    "k": (0, 0x0E),
-    "K": (2, 0x0E),
-    "l": (0, 0x0F),
-    "L": (2, 0x0F),
-    "m": (0, 0x10),
-    "M": (2, 0x10),
-    "n": (0, 0x11),
-    "N": (2, 0x11),
-    "o": (0, 0x12),
-    "O": (2, 0x12),
-    "p": (0, 0x13),
-    "P": (2, 0x13),
-    "q": (0, 0x14),
-    "Q": (2, 0x14),
-    "r": (0, 0x15),
-    "R": (2, 0x15),
-    "s": (0, 0x16),
-    "S": (2, 0x16),
-    "t": (0, 0x17),
-    "T": (2, 0x17),
-    "u": (0, 0x18),
-    "U": (2, 0x18),
-    "v": (0, 0x19),
-    "V": (2, 0x19),
-    "w": (0, 0x1A),
-    "W": (2, 0x1A),
-    "x": (0, 0x1B),
-    "X": (2, 0x1B),
-    "y": (0, 0x1C),
-    "Y": (2, 0x1C),
-    "z": (0, 0x1D),
-    "Z": (2, 0x1D),
-    "1": (0, 0x1E),
-    "!": (2, 0x1E),
-    "2": (0, 0x1F),
-    "@": (2, 0x1F),
-    "3": (0, 0x20),
-    "#": (2, 0x20),
-    "4": (0, 0x21),
-    "$": (2, 0x21),
-    "5": (0, 0x22),
-    "%": (2, 0x22),
-    "6": (0, 0x23),
-    "^": (2, 0x23),
-    "7": (0, 0x24),
-    "&": (2, 0x24),
-    "8": (0, 0x25),
-    "*": (2, 0x25),
-    "9": (0, 0x26),
-    "(": (2, 0x26),
-    "0": (0, 0x27),
-    ")": (2, 0x27),
-    "ret": (0, 0x28),
-    "esc": (0, 0x29),
-    "backspace": (0, 0x2A),
-    "tab": (0, 0x2B),
-    "space": (0, 0x2C),
-    "spc": (0, 0x2C),
-    "minus": (0, 0x2D),
-    "-": (0, 0x2D),
-    "_": (2, 0x2D),
-    "=": (0, 0x2E),
-    "+": (2, 0x2E),
-    "[": (0, 0x2F),
-    "{": (2, 0x2F),
-    "]": (0, 0x30),
-    "}": (2, 0x30),
-    "\\": (0, 0x31),
-    "|": (2, 0x31),
-    #'#': (0, 0x32),
-    #'~': (2, 0x32),
-    ";": (0, 0x33),
-    ":": (2, 0x33),
-    "'": (0, 0x34),
-    '"': (2, 0x34),
-    "`": (0, 0x35),
-    "~": (2, 0x35),
-    ",": (0, 0x36),
-    "<": (2, 0x36),
-    ".": (0, 0x37),
-    ">": (2, 0x37),
-    "/": (0, 0x38),
-    "?": (2, 0x38),
-    #'caps lock': (0, 0x39),
-    "f1": (0, 0x3A),
-    "f2": (0, 0x3B),
-    "f3": (0, 0x3C),
-    "f4": (0, 0x3D),
-    "f5": (0, 0x3E),
-    "f6": (0, 0x3F),
-    "f7": (0, 0x40),
-    "f8": (0, 0x41),
-    "f9": (0, 0x42),
-    "f10": (0, 0x43),
-    "f11": (0, 0x44),
-    "f12": (0, 0x45),
-    "printscreen": (0, 0x46),
-    "scroll": (0, 0x47),
-    "pause": (0, 0x48),
-    "insert": (0, 0x49),
-    "home": (0, 0x4A),
-    "pageup": (0, 0x4B),
-    "delete": (0, 0x4C),
-    "end": (0, 0x4D),
-    "pagedown": (0, 0x4E),
-    "right": (0, 0x4F),
-    "left": (0, 0x50),
-    "down": (0, 0x51),
-    "up": (0, 0x52),
-    "ctrl": (1, 0x0),
-    "shift": (2, 0x0),
-    "alt": (4, 0x0),
-    "meta": (8, 0x0),
-    "rctrl": (16, 0x0),
-    "rshift": (32, 0x0),
-    "ralt": (64, 0x0),
-    "rmeta": (128, 0x0),
+    "a": Key(usb=UsbKey(code=0x04, mods=())),
+    "A": Key(usb=UsbKey(code=0x04, mods=(2,))),
+    "b": Key(usb=UsbKey(code=0x05, mods=())),
+    "B": Key(usb=UsbKey(code=0x05, mods=(2,))),
+    "c": Key(usb=UsbKey(code=0x06, mods=())),
+    "C": Key(usb=UsbKey(code=0x06, mods=(2,))),
+    "d": Key(usb=UsbKey(code=0x07, mods=())),
+    "D": Key(usb=UsbKey(code=0x07, mods=(2,))),
+    "e": Key(usb=UsbKey(code=0x08, mods=())),
+    "E": Key(usb=UsbKey(code=0x08, mods=(2,))),
+    "f": Key(usb=UsbKey(code=0x09, mods=())),
+    "F": Key(usb=UsbKey(code=0x09, mods=(2,))),
+    "g": Key(usb=UsbKey(code=0x0A, mods=())),
+    "G": Key(usb=UsbKey(code=0x0A, mods=(2,))),
+    "h": Key(usb=UsbKey(code=0x0B, mods=())),
+    "H": Key(usb=UsbKey(code=0x0B, mods=(2,))),
+    "i": Key(usb=UsbKey(code=0x0C, mods=())),
+    "I": Key(usb=UsbKey(code=0x0C, mods=(2,))),
+    "j": Key(usb=UsbKey(code=0x0D, mods=())),
+    "J": Key(usb=UsbKey(code=0x0D, mods=(2,))),
+    "k": Key(usb=UsbKey(code=0x0E, mods=())),
+    "K": Key(usb=UsbKey(code=0x0E, mods=(2,))),
+    "l": Key(usb=UsbKey(code=0x0F, mods=())),
+    "L": Key(usb=UsbKey(code=0x0F, mods=(2,))),
+    "m": Key(usb=UsbKey(code=0x10, mods=())),
+    "M": Key(usb=UsbKey(code=0x10, mods=(2,))),
+    "n": Key(usb=UsbKey(code=0x11, mods=())),
+    "N": Key(usb=UsbKey(code=0x11, mods=(2,))),
+    "o": Key(usb=UsbKey(code=0x12, mods=())),
+    "O": Key(usb=UsbKey(code=0x12, mods=(2,))),
+    "p": Key(usb=UsbKey(code=0x13, mods=())),
+    "P": Key(usb=UsbKey(code=0x13, mods=(2,))),
+    "q": Key(usb=UsbKey(code=0x14, mods=())),
+    "Q": Key(usb=UsbKey(code=0x14, mods=(2,))),
+    "r": Key(usb=UsbKey(code=0x15, mods=())),
+    "R": Key(usb=UsbKey(code=0x15, mods=(2,))),
+    "s": Key(usb=UsbKey(code=0x16, mods=())),
+    "S": Key(usb=UsbKey(code=0x16, mods=(2,))),
+    "t": Key(usb=UsbKey(code=0x17, mods=())),
+    "T": Key(usb=UsbKey(code=0x17, mods=(2,))),
+    "u": Key(usb=UsbKey(code=0x18, mods=())),
+    "U": Key(usb=UsbKey(code=0x18, mods=(2,))),
+    "v": Key(usb=UsbKey(code=0x19, mods=())),
+    "V": Key(usb=UsbKey(code=0x19, mods=(2,))),
+    "w": Key(usb=UsbKey(code=0x1A, mods=())),
+    "W": Key(usb=UsbKey(code=0x1A, mods=(2,))),
+    "x": Key(usb=UsbKey(code=0x1B, mods=())),
+    "X": Key(usb=UsbKey(code=0x1B, mods=(2,))),
+    "y": Key(usb=UsbKey(code=0x1C, mods=())),
+    "Y": Key(usb=UsbKey(code=0x1C, mods=(2,))),
+    "z": Key(usb=UsbKey(code=0x1D, mods=())),
+    "Z": Key(usb=UsbKey(code=0x1D, mods=(2,))),
+    "1": Key(usb=UsbKey(code=0x1E, mods=())),
+    "!": Key(usb=UsbKey(code=0x1E, mods=(2,))),
+    "2": Key(usb=UsbKey(code=0x1F, mods=())),
+    "@": Key(usb=UsbKey(code=0x1F, mods=(2,))),
+    "3": Key(usb=UsbKey(code=0x20, mods=())),
+    "#": Key(usb=UsbKey(code=0x20, mods=(2,))),
+    "4": Key(usb=UsbKey(code=0x21, mods=())),
+    "$": Key(usb=UsbKey(code=0x21, mods=(2,))),
+    "5": Key(usb=UsbKey(code=0x22, mods=())),
+    "%": Key(usb=UsbKey(code=0x22, mods=(2,))),
+    "6": Key(usb=UsbKey(code=0x23, mods=())),
+    "^": Key(usb=UsbKey(code=0x23, mods=(2,))),
+    "7": Key(usb=UsbKey(code=0x24, mods=())),
+    "&": Key(usb=UsbKey(code=0x24, mods=(2,))),
+    "8": Key(usb=UsbKey(code=0x25, mods=())),
+    "*": Key(usb=UsbKey(code=0x25, mods=(2,))),
+    "9": Key(usb=UsbKey(code=0x26, mods=())),
+    "(": Key(usb=UsbKey(code=0x26, mods=(2,))),
+    "0": Key(usb=UsbKey(code=0x27, mods=())),
+    ")": Key(usb=UsbKey(code=0x27, mods=(2,))),
+    "ret": Key(usb=UsbKey(code=0x28, mods=())),
+    "esc": Key(usb=UsbKey(code=0x29, mods=())),
+    "backspace": Key(usb=UsbKey(code=0x2A, mods=())),
+    "tab": Key(usb=UsbKey(code=0x2B, mods=())),
+    "space": Key(usb=UsbKey(code=0x2C, mods=())),
+    "spc": Key(usb=UsbKey(code=0x2C, mods=())),
+    "minus": Key(usb=UsbKey(code=0x2D, mods=())),
+    "-": Key(usb=UsbKey(code=0x2D, mods=())),
+    "_": Key(usb=UsbKey(code=0x2D, mods=(2,))),
+    "=": Key(usb=UsbKey(code=0x2E, mods=())),
+    "+": Key(usb=UsbKey(code=0x2E, mods=(2,))),
+    "[": Key(usb=UsbKey(code=0x2F, mods=())),
+    "{": Key(usb=UsbKey(code=0x2F, mods=(2,))),
+    "]": Key(usb=UsbKey(code=0x30, mods=())),
+    "}": Key(usb=UsbKey(code=0x30, mods=(2,))),
+    "\\": Key(usb=UsbKey(code=0x31, mods=())),
+    "|": Key(usb=UsbKey(code=0x31, mods=(2,))),
+    #'#': Key(usb=UsbKey(code=0x32, mods=())),
+    #'~': Key(usb=UsbKey(code=0x32, mods=(2,))),
+    ";": Key(usb=UsbKey(code=0x33, mods=())),
+    ":": Key(usb=UsbKey(code=0x33, mods=(2,))),
+    "'": Key(usb=UsbKey(code=0x34, mods=())),
+    '"': Key(usb=UsbKey(code=0x34, mods=(2,))),
+    "`": Key(usb=UsbKey(code=0x35, mods=())),
+    "~": Key(usb=UsbKey(code=0x35, mods=(2,))),
+    ",": Key(usb=UsbKey(code=0x36, mods=())),
+    "<": Key(usb=UsbKey(code=0x36, mods=(2,))),
+    ".": Key(usb=UsbKey(code=0x37, mods=())),
+    ">": Key(usb=UsbKey(code=0x37, mods=(2,))),
+    "/": Key(usb=UsbKey(code=0x38, mods=())),
+    "?": Key(usb=UsbKey(code=0x38, mods=(2,))),
+    #'caps lock': Key(usb=UsbKey(code=0x39, mods=())),
+    "f1": Key(usb=UsbKey(code=0x3A, mods=())),
+    "f2": Key(usb=UsbKey(code=0x3B, mods=())),
+    "f3": Key(usb=UsbKey(code=0x3C, mods=())),
+    "f4": Key(usb=UsbKey(code=0x3D, mods=())),
+    "f5": Key(usb=UsbKey(code=0x3E, mods=())),
+    "f6": Key(usb=UsbKey(code=0x3F, mods=())),
+    "f7": Key(usb=UsbKey(code=0x40, mods=())),
+    "f8": Key(usb=UsbKey(code=0x41, mods=())),
+    "f9": Key(usb=UsbKey(code=0x42, mods=())),
+    "f10": Key(usb=UsbKey(code=0x43, mods=())),
+    "f11": Key(usb=UsbKey(code=0x44, mods=())),
+    "f12": Key(usb=UsbKey(code=0x45, mods=())),
+    "printscreen": Key(usb=UsbKey(code=0x46, mods=())),
+    "scroll": Key(usb=UsbKey(code=0x47, mods=())),
+    "pause": Key(usb=UsbKey(code=0x48, mods=())),
+    "insert": Key(usb=UsbKey(code=0x49, mods=())),
+    "home": Key(usb=UsbKey(code=0x4A, mods=())),
+    "pageup": Key(usb=UsbKey(code=0x4B, mods=())),
+    "delete": Key(usb=UsbKey(code=0x4C, mods=())),
+    "end": Key(usb=UsbKey(code=0x4D, mods=())),
+    "pagedown": Key(usb=UsbKey(code=0x4E, mods=())),
+    "right": Key(usb=UsbKey(code=0x4F, mods=())),
+    "left": Key(usb=UsbKey(code=0x50, mods=())),
+    "down": Key(usb=UsbKey(code=0x51, mods=())),
+    "up": Key(usb=UsbKey(code=0x52, mods=())),
+    "ctrl": Key(usb=UsbKey(code=0x0, mods=(1,))),
+    "shift": Key(usb=UsbKey(code=0x0, mods=(2,))),
+    "alt": Key(usb=UsbKey(code=0x0, mods=(4,))),
+    "meta": Key(usb=UsbKey(code=0x0, mods=(8,))),
+    "rctrl": Key(usb=UsbKey(code=0x0, mods=(16,))),
+    "rshift": Key(usb=UsbKey(code=0x0, mods=(32,))),
+    "ralt": Key(usb=UsbKey(code=0x0, mods=(64,))),
+    "rmeta": Key(usb=UsbKey(code=0x0, mods=(128,))),
 }
 
 
@@ -441,16 +466,16 @@ def parse_and_send_cmd(gadget, line):
         return
 
     key = line
-    mods = 0
+    mods = []
     while True:
         if key.startswith("ctrl-"):
-            mods |= 0x01
+            mods += keycodes["ctrl"].usb.mods
             key = key[len("ctrl-") :]
         elif key.startswith("shift-"):
-            mods |= 0x02
+            mods += keycodes["shift"].usb.mods
             key = key[len("shift-") :]
         elif key.startswith("alt-"):
-            mods |= 0x04
+            mods += keycodes["alt"].usb.mods
             key = key[len("alt-") :]
         else:
             break
@@ -459,8 +484,8 @@ def parse_and_send_cmd(gadget, line):
         print("Unknown key: {}".format(key))
         return
 
-    extra_mods, keycode = keycodes[key]
-    mods |= extra_mods
+    extra_mods, keycode = keycodes[key].usb
+    mods += extra_mods
     gadget.write_keyboard_report(mods, keycode)
 
 
@@ -504,9 +529,11 @@ async def main():
         else:
             print("None of {} exist, skipping storage emulation".format(args.storage))
 
-    with Gadget(
-        storage_path=storage, cdrom=args.is_cdrom, hid=not args.storage_only
-    ) as gadget:
+    gadget_class = UsbHidGadget
+    if args.storage_only:
+        gadget_class = BaseGadget
+
+    with gadget_class(storage_path=storage, cdrom=args.is_cdrom) as gadget:
         if args.socket:
             server = await asyncio.start_unix_server(
                 functools.partial(handle_client, gadget), args.socket
