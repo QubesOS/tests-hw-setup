@@ -137,6 +137,10 @@ cmd_poweroff() {
         local hal=$(hal_hostname "$1")
         shelly-control "$hal" off
     fi
+    if [ "$1" -eq 14 ]; then
+        local hal=$(hal_hostname "$1")
+        shelly-control "$hal" off
+    fi
     stripes "$1" "off" || :
 }
 
@@ -151,10 +155,6 @@ cmd_poweron() {
     if [ "$1" -eq 2 ]; then
         sleep 5
         ssh control@$hal power
-    fi
-    if [ "$1" -eq 3 ]; then
-        sleep 3
-        power-press 3 short
     fi
     if [ "$1" -eq 4 ]; then
         sleep 3
@@ -182,15 +182,16 @@ cmd_poweron() {
         sleep 3
         ssh control@$hal power
     fi
-    if [ "$1" -eq 10 ]; then
-        sleep 3
-        ssh control@$hal power
-    fi
     if [ "$1" -eq 12 ]; then
         sleep 5
         ssh control@$hal power
     fi
     if [ "$1" -eq 13 ]; then
+        shelly-control "$hal" on
+        sleep 3
+        ssh control@$hal power
+    fi
+    if [ "$1" -eq 14 ]; then
         shelly-control "$hal" on
         sleep 3
         ssh control@$hal power
@@ -234,6 +235,8 @@ cmd_wake() {
     elif [ "$1" -eq 12 ]; then
         ssh control@$hal power
     elif [ "$1" -eq 13 ]; then
+        ssh control@$hal power
+    elif [ "$1" -eq 14 ]; then
         ssh control@$hal power
     else
         echo "not supported"
@@ -279,6 +282,9 @@ cmd_console() {
         ssh -t console@$hal picocom --send-cmd=false --receive-cmd=false -b 115200 /dev/ttyAMA1
         return
     elif [ "$target" = 1 ]; then
+        ssh -t console@$hal connect-serial-console /dev/ttyUSB0
+        return
+    elif [ "$target" = 3 ]; then
         ssh -t console@$hal connect-serial-console /dev/ttyUSB0
         return
     elif [ "$target" = 11 ]; then
