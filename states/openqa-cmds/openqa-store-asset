@@ -59,7 +59,7 @@ ssh_target sh -c 'cat > /tmp/snapshot.sh && sh /tmp/snapshot.sh' <<EOF
 set -e
 set -x
 
-if [ "\$(blkid "$lvmpart" -o value -s TYPE)" = "crypto_LUKS" ]; then
+if [ "\$(blkid -p "$lvmpart" -o value -s TYPE)" = "crypto_LUKS" ]; then
     cryptsetup open "$lvmpart" luks <<<"lukspass"
 fi
 

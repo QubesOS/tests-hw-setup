@@ -108,7 +108,7 @@ https://github.com/pikvm/kvmd:
 
 kvmd-install:
   cmd.run:
-    - name: pipx install --system-site-packages .
+    - name: pipx install --system-site-packages -f .
     - cwd: /var/lib/pikvm-sources/kvmd
     - env:
       - PIPX_HOME: /opt/pipx

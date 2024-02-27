@@ -17,7 +17,7 @@ restore_snapshot() {
     ssh_target sh -c 'cat > /tmp/snapshot.sh && bash /tmp/snapshot.sh' <<EOF
 set -euo pipefail
 
-if [ "\$(blkid "$lvmpart" -o value -s TYPE)" = "crypto_LUKS" ]; then
+if [ "\$(blkid -p "$lvmpart" -o value -s TYPE)" = "crypto_LUKS" ]; then
     cryptsetup open "$lvmpart" luks <<<"lukspass"
 fi
 
