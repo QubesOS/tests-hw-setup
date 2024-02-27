@@ -79,6 +79,8 @@ workers-global:
         # force x86_64, even though worker itself is arm64
         ARCH = x86_64
         WORKER_CLASS = {{ worker_class }}
+        DEFAULT_CLICK_SLEEP = 0.05
+        DEFAULT_DCLICK_SLEEP = 0.05
         GENERAL_HW_CMD_DIR = /usr/local/openqa-cmds
         GENERAL_HW_POWERON_CMD = openqa-poweron
         GENERAL_HW_POWEROFF_CMD = openqa-poweroff
