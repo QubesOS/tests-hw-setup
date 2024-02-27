@@ -160,6 +160,7 @@ kvmd-install:
   file.managed:
     - contents: |
         KERNEL=="video[0-9]*", KERNELS=="fe801000.csi|fe801000.csi1", GROUP="video"
+        KERNEL=="ttyACM[0-9]*", ENV{ID_VENDOR_ID}=="1209", ENV{ID_MODEL_ID}=="eda3", GROUP="kvmd", SYMLINK+="kvmd-hid-bridge"
 
 # handle rename
 /etc/udev/rules.d/99-kvmd.rules:
@@ -171,6 +172,29 @@ kvmd-install:
 
 /etc/kvmd/override.d:
   file.directory: []
+
+{% if salt['pillar.get']('gadget:hid', "usb") == "ps2" %}
+/etc/kvmd/override.d/hid-ps2.yaml:
+  file.managed:
+  - require:
+    - file: /etc/kvmd/override.d
+  - contents: |
+      kvmd:
+        hid:
+          type: serial
+          device: /dev/kvmd-hid-bridge
+          reset_pin: -1
+      otg:
+        devices:
+          hid:
+            keyboard:
+              start: false
+            mouse:
+              start: false
+{% else %}
+/etc/kvmd/override.d/hid-ps2.yaml:
+  file.absent: []
+{% endif %}
 
 /usr/share/kvmd/extras:
   file.directory:

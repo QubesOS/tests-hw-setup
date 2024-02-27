@@ -3,10 +3,12 @@
 
 video-pkgs:
   pkg.installed:
+    - resolve_capabilities: True
     - pkgs:
       - raspberrypi-firmware-extra-pi4
       - v4l-utils
       - socat
+      - python3-pyserial
 
 /etc/fstab:
   file.replace:
@@ -72,6 +74,7 @@ move-boot:
     - template: jinja
     - context:
         hostid: {{hostid}}
+        ps2: {{salt['pillar.get']('gadget:hid', 'usb') == 'ps2'}}
 
 
 ### "custom" boot mode via emulated USB stick
@@ -113,6 +116,7 @@ customboot:
     - template: jinja
     - context:
         hostid: {{hostid}}
+        ps2: {{salt['pillar.get']('gadget:hid', 'usb') == 'ps2'}}
 
 #TODO:
 # - kernel

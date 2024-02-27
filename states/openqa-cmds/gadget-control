@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 
 import argparse
+import dataclasses
 import os
 import os.path
 import pathlib
@@ -10,7 +11,13 @@ import fileinput
 import functools
 import shutil
 import asyncio
+import serial
+import time
+from operator import sub
 
+# bottom right corner, 1024x768 resolution is hardcoded on the openQA side, but
+# also in the USB HID descriptor below
+MOUSE_HIDE_POS = (1023, 767)
 
 class BaseGadget:
     def __init__(self, storage_path=None, cdrom=False):
@@ -18,6 +25,7 @@ class BaseGadget:
         self.udc = os.listdir("/sys/class/udc")[0]
         self.storage_path = storage_path
         self.storage_cdrom = cdrom
+        self.enable_usb_gadget = bool(self.storage_path)
 
     def set_sysfs_attr(self, name, value):
         path = self.gadget_configfs_root / name
@@ -65,10 +73,14 @@ class BaseGadget:
         )
 
     def enable(self):
+        if not self.enable_usb_gadget:
+            return
         with open(self.gadget_configfs_root / "UDC", "w") as f:
             f.write(self.udc)
 
     def disable(self):
+        if not self.enable_usb_gadget:
+            return
         with open(os.path.join(self.gadget_configfs_root, "UDC"), "w") as f:
             f.write("\n")
 
@@ -105,6 +117,7 @@ class UsbHidGadget(BaseGadget):
         super().__init__(storage_path=storage_path, cdrom=cdrom)
         self.mouse_dev = None
         self.keyboard_dev = None
+        self.enable_usb_gadget = True
 
     def create_gadget(self):
         super().create_gadget()
@@ -274,6 +287,125 @@ class UsbHidGadget(BaseGadget):
         self.keyboard_dev.write(report)
         self.keyboard_dev.write(b"\0" * 8)
 
+    @staticmethod
+    def get_keycode(name):
+        return keycodes[name].usb
+
+
+class Ps2HidGadget(BaseGadget):
+    def __init__(self, storage_path=None, cdrom=False):
+        super().__init__(storage_path=None, cdrom=False)
+        self.hid_dev = None
+        self.pressed_buttons = 0
+        # usually mouse starts at the screen center
+        self.last_pos = (1024 // 2, 768 // 2)
+
+    def enable(self):
+        super().enable()
+        self.hid_dev = serial.Serial("/dev/ttyACM0", 115200, timeout=2.0)
+
+    def disable(self):
+        if self.hid_dev:
+            self.hid_dev.close()
+            self.hid_dev = None
+        super().disable()
+
+    @staticmethod
+    def _make_crc16(data: bytes) -> int:
+        crc = 0xFFFF
+        for byte in data:
+            crc = crc ^ byte
+            for _ in range(8):
+                if crc & 0x0001 == 0:
+                    crc = crc >> 1
+                else:
+                    crc = crc >> 1
+                    crc = crc ^ 0xA001
+        return crc
+
+    def _send_request(self, command: bytes) -> bytes:
+        assert len(command) == 5, command
+        request = b"\x33" + command
+        request += struct.pack(">H", self._make_crc16(request))
+        assert len(request) == 8, request
+        self.hid_dev.write(request)
+
+    # Commands (from kvmd/hid/pico/src/ph_proto.h):
+    #define PH_PROTO_CMD_PING               ((u8)0x01)
+    #define PH_PROTO_CMD_REPEAT             ((u8)0x02)
+    #define PH_PROTO_CMD_SET_KBD            ((u8)0x03)
+    #define PH_PROTO_CMD_SET_MOUSE          ((u8)0x04)
+    #define PH_PROTO_CMD_SET_CONNECTED      ((u8)0x05)
+    #define PH_PROTO_CMD_CLEAR_HID          ((u8)0x10)
+    #define PH_PROTO_CMD_KBD_KEY            ((u8)0x11)
+    #define PH_PROTO_CMD_MOUSE_ABS          ((u8)0x12)
+    #define PH_PROTO_CMD_MOUSE_BUTTON       ((u8)0x13)
+    #define PH_PROTO_CMD_MOUSE_WHEEL        ((u8)0x14)
+    #define PH_PROTO_CMD_MOUSE_REL          ((u8)0x15)
+
+    def write_mouse_move_report(self, x, y, wheel=0):
+        if (x, y) == MOUSE_HIDE_POS:
+            # re-sync mouse pos by moving way more than necessary
+            for _ in range(1024 // 127 + 1):
+                self._send_request(struct.pack(">Bbbxx", 0x15, 127, 127))
+                self._send_request(struct.pack(">Bbbxx", 0x15, 127, 127))
+        else:
+            # something about mouse acceleration? the constants here are chosen
+            # experimentally, to get pixel-precise result; do not touch unless
+            # tested to also produce pixel-precis results
+            x += 3
+            y += 3
+            offset = tuple(map(sub, (x, y), self.last_pos))
+            while offset != (0, 0):
+                now_move = tuple(map(lambda a: max(min(a, 4), -4), offset))
+                self._send_request(struct.pack(">Bbbxx", 0x15, now_move[0], now_move[1]))
+                time.sleep(0.02)
+                offset = tuple(map(sub, offset, now_move))
+        self.last_pos = (x, y)
+
+    def write_mouse_btn_report(self, buttons):
+        # 0x13 - button
+        # arg buttons: bitmask of pressed:
+        #  - 1<<0 - left
+        #  - 1<<1 - right
+        #  - 1<<2 - middle
+        # cmd buttons:
+        #  - 1<<0 - middle
+        #  - 1<<1 - right
+        #  - 1<<2 - left
+        # command:
+        #  0b11101110
+        #    ^^^ - select which button to consider
+        #        ^^^ - which are actually pressed
+        # second byte is for "extra" buttons (back/forward), ignore them
+        buttons = (0
+            | (buttons & 0x1) << 2
+            | (buttons & 0x2) << 0
+            | (buttons & 0x4) >> 2
+        )
+        select_mask = (self.pressed_buttons | buttons) << 5
+        command = struct.pack(">BBBxx", 0x13, select_mask | (buttons << 1), 0)
+        self.pressed_buttons = buttons
+        self._send_request(command)
+
+    def write_keyboard_report(self, modifiers, key):
+        for mod in modifiers:
+            self._send_request(struct.pack(">BBBxx", 0x11, mod, 1))
+        self._send_request(struct.pack(">BBBxx", 0x11, key, 1))
+        self._send_request(struct.pack(">BBBxx", 0x11, key, 0))
+        for mod in reversed(modifiers):
+            self._send_request(struct.pack(">BBBxx", 0x11, mod, 0))
+
+    @staticmethod
+    def get_keycode(name):
+        return keycodes[name].mcu
+
+
+@dataclasses.dataclass(frozen=True)
+class McuKey:
+    code: int
+    mods: tuple[int]
+
 
 @dataclasses.dataclass(frozen=True)
 class UsbKey:
@@ -283,149 +415,150 @@ class UsbKey:
 
 @dataclasses.dataclass(frozen=True)
 class Key:
+    mcu: McuKey
     usb: UsbKey
 
 
 # based on Universal Serial Bus HID Usage Tables
 keycodes = {
     # key: (mods, keycode)
-    "a": Key(usb=UsbKey(code=0x04, mods=())),
-    "A": Key(usb=UsbKey(code=0x04, mods=(2,))),
-    "b": Key(usb=UsbKey(code=0x05, mods=())),
-    "B": Key(usb=UsbKey(code=0x05, mods=(2,))),
-    "c": Key(usb=UsbKey(code=0x06, mods=())),
-    "C": Key(usb=UsbKey(code=0x06, mods=(2,))),
-    "d": Key(usb=UsbKey(code=0x07, mods=())),
-    "D": Key(usb=UsbKey(code=0x07, mods=(2,))),
-    "e": Key(usb=UsbKey(code=0x08, mods=())),
-    "E": Key(usb=UsbKey(code=0x08, mods=(2,))),
-    "f": Key(usb=UsbKey(code=0x09, mods=())),
-    "F": Key(usb=UsbKey(code=0x09, mods=(2,))),
-    "g": Key(usb=UsbKey(code=0x0A, mods=())),
-    "G": Key(usb=UsbKey(code=0x0A, mods=(2,))),
-    "h": Key(usb=UsbKey(code=0x0B, mods=())),
-    "H": Key(usb=UsbKey(code=0x0B, mods=(2,))),
-    "i": Key(usb=UsbKey(code=0x0C, mods=())),
-    "I": Key(usb=UsbKey(code=0x0C, mods=(2,))),
-    "j": Key(usb=UsbKey(code=0x0D, mods=())),
-    "J": Key(usb=UsbKey(code=0x0D, mods=(2,))),
-    "k": Key(usb=UsbKey(code=0x0E, mods=())),
-    "K": Key(usb=UsbKey(code=0x0E, mods=(2,))),
-    "l": Key(usb=UsbKey(code=0x0F, mods=())),
-    "L": Key(usb=UsbKey(code=0x0F, mods=(2,))),
-    "m": Key(usb=UsbKey(code=0x10, mods=())),
-    "M": Key(usb=UsbKey(code=0x10, mods=(2,))),
-    "n": Key(usb=UsbKey(code=0x11, mods=())),
-    "N": Key(usb=UsbKey(code=0x11, mods=(2,))),
-    "o": Key(usb=UsbKey(code=0x12, mods=())),
-    "O": Key(usb=UsbKey(code=0x12, mods=(2,))),
-    "p": Key(usb=UsbKey(code=0x13, mods=())),
-    "P": Key(usb=UsbKey(code=0x13, mods=(2,))),
-    "q": Key(usb=UsbKey(code=0x14, mods=())),
-    "Q": Key(usb=UsbKey(code=0x14, mods=(2,))),
-    "r": Key(usb=UsbKey(code=0x15, mods=())),
-    "R": Key(usb=UsbKey(code=0x15, mods=(2,))),
-    "s": Key(usb=UsbKey(code=0x16, mods=())),
-    "S": Key(usb=UsbKey(code=0x16, mods=(2,))),
-    "t": Key(usb=UsbKey(code=0x17, mods=())),
-    "T": Key(usb=UsbKey(code=0x17, mods=(2,))),
-    "u": Key(usb=UsbKey(code=0x18, mods=())),
-    "U": Key(usb=UsbKey(code=0x18, mods=(2,))),
-    "v": Key(usb=UsbKey(code=0x19, mods=())),
-    "V": Key(usb=UsbKey(code=0x19, mods=(2,))),
-    "w": Key(usb=UsbKey(code=0x1A, mods=())),
-    "W": Key(usb=UsbKey(code=0x1A, mods=(2,))),
-    "x": Key(usb=UsbKey(code=0x1B, mods=())),
-    "X": Key(usb=UsbKey(code=0x1B, mods=(2,))),
-    "y": Key(usb=UsbKey(code=0x1C, mods=())),
-    "Y": Key(usb=UsbKey(code=0x1C, mods=(2,))),
-    "z": Key(usb=UsbKey(code=0x1D, mods=())),
-    "Z": Key(usb=UsbKey(code=0x1D, mods=(2,))),
-    "1": Key(usb=UsbKey(code=0x1E, mods=())),
-    "!": Key(usb=UsbKey(code=0x1E, mods=(2,))),
-    "2": Key(usb=UsbKey(code=0x1F, mods=())),
-    "@": Key(usb=UsbKey(code=0x1F, mods=(2,))),
-    "3": Key(usb=UsbKey(code=0x20, mods=())),
-    "#": Key(usb=UsbKey(code=0x20, mods=(2,))),
-    "4": Key(usb=UsbKey(code=0x21, mods=())),
-    "$": Key(usb=UsbKey(code=0x21, mods=(2,))),
-    "5": Key(usb=UsbKey(code=0x22, mods=())),
-    "%": Key(usb=UsbKey(code=0x22, mods=(2,))),
-    "6": Key(usb=UsbKey(code=0x23, mods=())),
-    "^": Key(usb=UsbKey(code=0x23, mods=(2,))),
-    "7": Key(usb=UsbKey(code=0x24, mods=())),
-    "&": Key(usb=UsbKey(code=0x24, mods=(2,))),
-    "8": Key(usb=UsbKey(code=0x25, mods=())),
-    "*": Key(usb=UsbKey(code=0x25, mods=(2,))),
-    "9": Key(usb=UsbKey(code=0x26, mods=())),
-    "(": Key(usb=UsbKey(code=0x26, mods=(2,))),
-    "0": Key(usb=UsbKey(code=0x27, mods=())),
-    ")": Key(usb=UsbKey(code=0x27, mods=(2,))),
-    "ret": Key(usb=UsbKey(code=0x28, mods=())),
-    "esc": Key(usb=UsbKey(code=0x29, mods=())),
-    "backspace": Key(usb=UsbKey(code=0x2A, mods=())),
-    "tab": Key(usb=UsbKey(code=0x2B, mods=())),
-    "space": Key(usb=UsbKey(code=0x2C, mods=())),
-    "spc": Key(usb=UsbKey(code=0x2C, mods=())),
-    "minus": Key(usb=UsbKey(code=0x2D, mods=())),
-    "-": Key(usb=UsbKey(code=0x2D, mods=())),
-    "_": Key(usb=UsbKey(code=0x2D, mods=(2,))),
-    "=": Key(usb=UsbKey(code=0x2E, mods=())),
-    "+": Key(usb=UsbKey(code=0x2E, mods=(2,))),
-    "[": Key(usb=UsbKey(code=0x2F, mods=())),
-    "{": Key(usb=UsbKey(code=0x2F, mods=(2,))),
-    "]": Key(usb=UsbKey(code=0x30, mods=())),
-    "}": Key(usb=UsbKey(code=0x30, mods=(2,))),
-    "\\": Key(usb=UsbKey(code=0x31, mods=())),
-    "|": Key(usb=UsbKey(code=0x31, mods=(2,))),
-    #'#': Key(usb=UsbKey(code=0x32, mods=())),
-    #'~': Key(usb=UsbKey(code=0x32, mods=(2,))),
-    ";": Key(usb=UsbKey(code=0x33, mods=())),
-    ":": Key(usb=UsbKey(code=0x33, mods=(2,))),
-    "'": Key(usb=UsbKey(code=0x34, mods=())),
-    '"': Key(usb=UsbKey(code=0x34, mods=(2,))),
-    "`": Key(usb=UsbKey(code=0x35, mods=())),
-    "~": Key(usb=UsbKey(code=0x35, mods=(2,))),
-    ",": Key(usb=UsbKey(code=0x36, mods=())),
-    "<": Key(usb=UsbKey(code=0x36, mods=(2,))),
-    ".": Key(usb=UsbKey(code=0x37, mods=())),
-    ">": Key(usb=UsbKey(code=0x37, mods=(2,))),
-    "/": Key(usb=UsbKey(code=0x38, mods=())),
-    "?": Key(usb=UsbKey(code=0x38, mods=(2,))),
-    #'caps lock': Key(usb=UsbKey(code=0x39, mods=())),
-    "f1": Key(usb=UsbKey(code=0x3A, mods=())),
-    "f2": Key(usb=UsbKey(code=0x3B, mods=())),
-    "f3": Key(usb=UsbKey(code=0x3C, mods=())),
-    "f4": Key(usb=UsbKey(code=0x3D, mods=())),
-    "f5": Key(usb=UsbKey(code=0x3E, mods=())),
-    "f6": Key(usb=UsbKey(code=0x3F, mods=())),
-    "f7": Key(usb=UsbKey(code=0x40, mods=())),
-    "f8": Key(usb=UsbKey(code=0x41, mods=())),
-    "f9": Key(usb=UsbKey(code=0x42, mods=())),
-    "f10": Key(usb=UsbKey(code=0x43, mods=())),
-    "f11": Key(usb=UsbKey(code=0x44, mods=())),
-    "f12": Key(usb=UsbKey(code=0x45, mods=())),
-    "printscreen": Key(usb=UsbKey(code=0x46, mods=())),
-    "scroll": Key(usb=UsbKey(code=0x47, mods=())),
-    "pause": Key(usb=UsbKey(code=0x48, mods=())),
-    "insert": Key(usb=UsbKey(code=0x49, mods=())),
-    "home": Key(usb=UsbKey(code=0x4A, mods=())),
-    "pageup": Key(usb=UsbKey(code=0x4B, mods=())),
-    "delete": Key(usb=UsbKey(code=0x4C, mods=())),
-    "end": Key(usb=UsbKey(code=0x4D, mods=())),
-    "pagedown": Key(usb=UsbKey(code=0x4E, mods=())),
-    "right": Key(usb=UsbKey(code=0x4F, mods=())),
-    "left": Key(usb=UsbKey(code=0x50, mods=())),
-    "down": Key(usb=UsbKey(code=0x51, mods=())),
-    "up": Key(usb=UsbKey(code=0x52, mods=())),
-    "ctrl": Key(usb=UsbKey(code=0x0, mods=(1,))),
-    "shift": Key(usb=UsbKey(code=0x0, mods=(2,))),
-    "alt": Key(usb=UsbKey(code=0x0, mods=(4,))),
-    "meta": Key(usb=UsbKey(code=0x0, mods=(8,))),
-    "rctrl": Key(usb=UsbKey(code=0x0, mods=(16,))),
-    "rshift": Key(usb=UsbKey(code=0x0, mods=(32,))),
-    "ralt": Key(usb=UsbKey(code=0x0, mods=(64,))),
-    "rmeta": Key(usb=UsbKey(code=0x0, mods=(128,))),
+    "a": Key(usb=UsbKey(code=0x04, mods=()), mcu=McuKey(code=0x01, mods=())),
+    "A": Key(usb=UsbKey(code=0x04, mods=(2,)), mcu=McuKey(code=0x01, mods=(78,))),
+    "b": Key(usb=UsbKey(code=0x05, mods=()), mcu=McuKey(code=0x02, mods=())),
+    "B": Key(usb=UsbKey(code=0x05, mods=(2,)), mcu=McuKey(code=0x02, mods=(78,))),
+    "c": Key(usb=UsbKey(code=0x06, mods=()), mcu=McuKey(code=0x03, mods=())),
+    "C": Key(usb=UsbKey(code=0x06, mods=(2,)), mcu=McuKey(code=0x03, mods=(78,))),
+    "d": Key(usb=UsbKey(code=0x07, mods=()), mcu=McuKey(code=0x04, mods=())),
+    "D": Key(usb=UsbKey(code=0x07, mods=(2,)), mcu=McuKey(code=0x04, mods=(78,))),
+    "e": Key(usb=UsbKey(code=0x08, mods=()), mcu=McuKey(code=0x05, mods=())),
+    "E": Key(usb=UsbKey(code=0x08, mods=(2,)), mcu=McuKey(code=0x05, mods=(78,))),
+    "f": Key(usb=UsbKey(code=0x09, mods=()), mcu=McuKey(code=0x06, mods=())),
+    "F": Key(usb=UsbKey(code=0x09, mods=(2,)), mcu=McuKey(code=0x06, mods=(78,))),
+    "g": Key(usb=UsbKey(code=0x0A, mods=()), mcu=McuKey(code=0x07, mods=())),
+    "G": Key(usb=UsbKey(code=0x0A, mods=(2,)), mcu=McuKey(code=0x07, mods=(78,))),
+    "h": Key(usb=UsbKey(code=0x0B, mods=()), mcu=McuKey(code=0x08, mods=())),
+    "H": Key(usb=UsbKey(code=0x0B, mods=(2,)), mcu=McuKey(code=0x08, mods=(78,))),
+    "i": Key(usb=UsbKey(code=0x0C, mods=()), mcu=McuKey(code=0x09, mods=())),
+    "I": Key(usb=UsbKey(code=0x0C, mods=(2,)), mcu=McuKey(code=0x09, mods=(78,))),
+    "j": Key(usb=UsbKey(code=0x0D, mods=()), mcu=McuKey(code=0x0A, mods=())),
+    "J": Key(usb=UsbKey(code=0x0D, mods=(2,)), mcu=McuKey(code=0x0A, mods=(78,))),
+    "k": Key(usb=UsbKey(code=0x0E, mods=()), mcu=McuKey(code=0x0B, mods=())),
+    "K": Key(usb=UsbKey(code=0x0E, mods=(2,)), mcu=McuKey(code=0x0B, mods=(78,))),
+    "l": Key(usb=UsbKey(code=0x0F, mods=()), mcu=McuKey(code=0x0C, mods=())),
+    "L": Key(usb=UsbKey(code=0x0F, mods=(2,)), mcu=McuKey(code=0x0C, mods=(78,))),
+    "m": Key(usb=UsbKey(code=0x10, mods=()), mcu=McuKey(code=0x0d, mods=())),
+    "M": Key(usb=UsbKey(code=0x10, mods=(2,)), mcu=McuKey(code=0x0d, mods=(78,))),
+    "n": Key(usb=UsbKey(code=0x11, mods=()), mcu=McuKey(code=0x0e, mods=())),
+    "N": Key(usb=UsbKey(code=0x11, mods=(2,)), mcu=McuKey(code=0x0e, mods=(78,))),
+    "o": Key(usb=UsbKey(code=0x12, mods=()), mcu=McuKey(code=0x0f, mods=())),
+    "O": Key(usb=UsbKey(code=0x12, mods=(2,)), mcu=McuKey(code=0x0f, mods=(78,))),
+    "p": Key(usb=UsbKey(code=0x13, mods=()), mcu=McuKey(code=0x10, mods=())),
+    "P": Key(usb=UsbKey(code=0x13, mods=(2,)), mcu=McuKey(code=0x10, mods=(78,))),
+    "q": Key(usb=UsbKey(code=0x14, mods=()), mcu=McuKey(code=0x11, mods=())),
+    "Q": Key(usb=UsbKey(code=0x14, mods=(2,)), mcu=McuKey(code=0x11, mods=(78,))),
+    "r": Key(usb=UsbKey(code=0x15, mods=()), mcu=McuKey(code=0x12, mods=())),
+    "R": Key(usb=UsbKey(code=0x15, mods=(2,)), mcu=McuKey(code=0x12, mods=(78,))),
+    "s": Key(usb=UsbKey(code=0x16, mods=()), mcu=McuKey(code=0x13, mods=())),
+    "S": Key(usb=UsbKey(code=0x16, mods=(2,)), mcu=McuKey(code=0x13, mods=(78,))),
+    "t": Key(usb=UsbKey(code=0x17, mods=()), mcu=McuKey(code=0x14, mods=())),
+    "T": Key(usb=UsbKey(code=0x17, mods=(2,)), mcu=McuKey(code=0x14, mods=(78,))),
+    "u": Key(usb=UsbKey(code=0x18, mods=()), mcu=McuKey(code=0x15, mods=())),
+    "U": Key(usb=UsbKey(code=0x18, mods=(2,)), mcu=McuKey(code=0x15, mods=(78,))),
+    "v": Key(usb=UsbKey(code=0x19, mods=()), mcu=McuKey(code=0x16, mods=())),
+    "V": Key(usb=UsbKey(code=0x19, mods=(2,)), mcu=McuKey(code=0x16, mods=(78,))),
+    "w": Key(usb=UsbKey(code=0x1A, mods=()), mcu=McuKey(code=0x17, mods=())),
+    "W": Key(usb=UsbKey(code=0x1A, mods=(2,)), mcu=McuKey(code=0x17, mods=(78,))),
+    "x": Key(usb=UsbKey(code=0x1B, mods=()), mcu=McuKey(code=0x18, mods=())),
+    "X": Key(usb=UsbKey(code=0x1B, mods=(2,)), mcu=McuKey(code=0x18, mods=(78,))),
+    "y": Key(usb=UsbKey(code=0x1C, mods=()), mcu=McuKey(code=0x19, mods=())),
+    "Y": Key(usb=UsbKey(code=0x1C, mods=(2,)), mcu=McuKey(code=0x19, mods=(78,))),
+    "z": Key(usb=UsbKey(code=0x1D, mods=()), mcu=McuKey(code=0x1A, mods=())),
+    "Z": Key(usb=UsbKey(code=0x1D, mods=(2,)), mcu=McuKey(code=0x1A, mods=(78,))),
+    "1": Key(usb=UsbKey(code=0x1E, mods=()), mcu=McuKey(code=0x1B, mods=())),
+    "!": Key(usb=UsbKey(code=0x1E, mods=(2,)), mcu=McuKey(code=0x1B, mods=(78,))),
+    "2": Key(usb=UsbKey(code=0x1F, mods=()), mcu=McuKey(code=0x1C, mods=())),
+    "@": Key(usb=UsbKey(code=0x1F, mods=(2,)), mcu=McuKey(code=0x1C, mods=(78,))),
+    "3": Key(usb=UsbKey(code=0x20, mods=()), mcu=McuKey(code=0x1d, mods=())),
+    "#": Key(usb=UsbKey(code=0x20, mods=(2,)), mcu=McuKey(code=0x1d, mods=(78,))),
+    "4": Key(usb=UsbKey(code=0x21, mods=()), mcu=McuKey(code=0x1e, mods=())),
+    "$": Key(usb=UsbKey(code=0x21, mods=(2,)), mcu=McuKey(code=0x1e, mods=(78,))),
+    "5": Key(usb=UsbKey(code=0x22, mods=()), mcu=McuKey(code=0x1f, mods=())),
+    "%": Key(usb=UsbKey(code=0x22, mods=(2,)), mcu=McuKey(code=0x1f, mods=(78,))),
+    "6": Key(usb=UsbKey(code=0x23, mods=()), mcu=McuKey(code=0x20, mods=())),
+    "^": Key(usb=UsbKey(code=0x23, mods=(2,)), mcu=McuKey(code=0x20, mods=(78,))),
+    "7": Key(usb=UsbKey(code=0x24, mods=()), mcu=McuKey(code=0x21, mods=())),
+    "&": Key(usb=UsbKey(code=0x24, mods=(2,)), mcu=McuKey(code=0x21, mods=(78,))),
+    "8": Key(usb=UsbKey(code=0x25, mods=()), mcu=McuKey(code=0x22, mods=())),
+    "*": Key(usb=UsbKey(code=0x25, mods=(2,)), mcu=McuKey(code=0x22, mods=(78,))),
+    "9": Key(usb=UsbKey(code=0x26, mods=()), mcu=McuKey(code=0x23, mods=())),
+    "(": Key(usb=UsbKey(code=0x26, mods=(2,)), mcu=McuKey(code=0x23, mods=(78,))),
+    "0": Key(usb=UsbKey(code=0x27, mods=()), mcu=McuKey(code=0x24, mods=())),
+    ")": Key(usb=UsbKey(code=0x27, mods=(2,)), mcu=McuKey(code=0x24, mods=(78,))),
+    "ret": Key(usb=UsbKey(code=0x28, mods=()), mcu=McuKey(code=0x25, mods=())),
+    "esc": Key(usb=UsbKey(code=0x29, mods=()), mcu=McuKey(code=0x26, mods=())),
+    "backspace": Key(usb=UsbKey(code=0x2A, mods=()), mcu=McuKey(code=0x27, mods=())),
+    "tab": Key(usb=UsbKey(code=0x2B, mods=()), mcu=McuKey(code=0x28, mods=())),
+    "space": Key(usb=UsbKey(code=0x2C, mods=()), mcu=McuKey(code=0x29, mods=())),
+    "spc": Key(usb=UsbKey(code=0x2C, mods=()), mcu=McuKey(code=0x29, mods=())),
+    "minus": Key(usb=UsbKey(code=0x2D, mods=()), mcu=McuKey(code=0x2A, mods=())),
+    "-": Key(usb=UsbKey(code=0x2D, mods=()), mcu=McuKey(code=0x2A, mods=())),
+    "_": Key(usb=UsbKey(code=0x2D, mods=(2,)), mcu=McuKey(code=0x2A, mods=(78,))),
+    "=": Key(usb=UsbKey(code=0x2E, mods=()), mcu=McuKey(code=0x2B, mods=())),
+    "+": Key(usb=UsbKey(code=0x2E, mods=(2,)), mcu=McuKey(code=0x2B, mods=(78,))),
+    "[": Key(usb=UsbKey(code=0x2F, mods=()), mcu=McuKey(code=0x2C, mods=())),
+    "{": Key(usb=UsbKey(code=0x2F, mods=(2,)), mcu=McuKey(code=0x2C, mods=(78,))),
+    "]": Key(usb=UsbKey(code=0x30, mods=()), mcu=McuKey(code=0x2d, mods=())),
+    "}": Key(usb=UsbKey(code=0x30, mods=(2,)), mcu=McuKey(code=0x2d, mods=(78,))),
+    "\\": Key(usb=UsbKey(code=0x31, mods=()), mcu=McuKey(code=0x2e, mods=())),
+    "|": Key(usb=UsbKey(code=0x31, mods=(2,)), mcu=McuKey(code=0x2e, mods=(78,))),
+    #'#': Key(usb=UsbKey(code=0x32, mods=()), mcu=McuKey(code=0x2f, mods=())),
+    #'~': Key(usb=UsbKey(code=0x32, mods=(2,)), mcu=McuKey(code=0x2f, mods=(78,))),
+    ";": Key(usb=UsbKey(code=0x33, mods=()), mcu=McuKey(code=0x2f, mods=())),
+    ":": Key(usb=UsbKey(code=0x33, mods=(2,)), mcu=McuKey(code=0x2f, mods=(78,))),
+    "'": Key(usb=UsbKey(code=0x34, mods=()), mcu=McuKey(code=0x30, mods=())),
+    '"': Key(usb=UsbKey(code=0x34, mods=(2,)), mcu=McuKey(code=0x30, mods=(78,))),
+    "`": Key(usb=UsbKey(code=0x35, mods=()), mcu=McuKey(code=0x31, mods=())),
+    "~": Key(usb=UsbKey(code=0x35, mods=(2,)), mcu=McuKey(code=0x31, mods=(78,))),
+    ",": Key(usb=UsbKey(code=0x36, mods=()), mcu=McuKey(code=0x32, mods=())),
+    "<": Key(usb=UsbKey(code=0x36, mods=(2,)), mcu=McuKey(code=0x32, mods=(78,))),
+    ".": Key(usb=UsbKey(code=0x37, mods=()), mcu=McuKey(code=0x33, mods=())),
+    ">": Key(usb=UsbKey(code=0x37, mods=(2,)), mcu=McuKey(code=0x33, mods=(78,))),
+    "/": Key(usb=UsbKey(code=0x38, mods=()), mcu=McuKey(code=0x34, mods=())),
+    "?": Key(usb=UsbKey(code=0x38, mods=(2,)), mcu=McuKey(code=0x34, mods=(78,))),
+    #'caps lock': Key(usb=UsbKey(code=0x39, mods=()), mcu=McuKey(code=0x35, mods=())),
+    "f1": Key(usb=UsbKey(code=0x3A, mods=()), mcu=McuKey(code=0x36, mods=())),
+    "f2": Key(usb=UsbKey(code=0x3B, mods=()), mcu=McuKey(code=0x37, mods=())),
+    "f3": Key(usb=UsbKey(code=0x3C, mods=()), mcu=McuKey(code=0x38, mods=())),
+    "f4": Key(usb=UsbKey(code=0x3D, mods=()), mcu=McuKey(code=0x39, mods=())),
+    "f5": Key(usb=UsbKey(code=0x3E, mods=()), mcu=McuKey(code=0x3A, mods=())),
+    "f6": Key(usb=UsbKey(code=0x3F, mods=()), mcu=McuKey(code=0x3B, mods=())),
+    "f7": Key(usb=UsbKey(code=0x40, mods=()), mcu=McuKey(code=0x3c, mods=())),
+    "f8": Key(usb=UsbKey(code=0x41, mods=()), mcu=McuKey(code=0x3d, mods=())),
+    "f9": Key(usb=UsbKey(code=0x42, mods=()), mcu=McuKey(code=0x3e, mods=())),
+    "f10": Key(usb=UsbKey(code=0x43, mods=()), mcu=McuKey(code=0x3f, mods=())),
+    "f11": Key(usb=UsbKey(code=0x44, mods=()), mcu=McuKey(code=0x40, mods=())),
+    "f12": Key(usb=UsbKey(code=0x45, mods=()), mcu=McuKey(code=0x41, mods=())),
+    "printscreen": Key(usb=UsbKey(code=0x46, mods=()), mcu=McuKey(code=0x42, mods=())),
+    "scroll": Key(usb=UsbKey(code=0x47, mods=()), mcu=McuKey(code=0x44, mods=())),
+    "pause": Key(usb=UsbKey(code=0x48, mods=()), mcu=McuKey(code=0x45, mods=())),
+    "insert": Key(usb=UsbKey(code=0x49, mods=()), mcu=McuKey(code=0x43, mods=())),
+    "home": Key(usb=UsbKey(code=0x4A, mods=()), mcu=McuKey(code=0x44, mods=())),
+    "pageup": Key(usb=UsbKey(code=0x4B, mods=()), mcu=McuKey(code=0x45, mods=())),
+    "delete": Key(usb=UsbKey(code=0x4C, mods=()), mcu=McuKey(code=0x46, mods=())),
+    "end": Key(usb=UsbKey(code=0x4D, mods=()), mcu=McuKey(code=0x47, mods=())),
+    "pagedown": Key(usb=UsbKey(code=0x4E, mods=()), mcu=McuKey(code=0x48, mods=())),
+    "right": Key(usb=UsbKey(code=0x4F, mods=()), mcu=McuKey(code=0x49, mods=())),
+    "left": Key(usb=UsbKey(code=0x50, mods=()), mcu=McuKey(code=0x4a, mods=())),
+    "down": Key(usb=UsbKey(code=0x51, mods=()), mcu=McuKey(code=0x4b, mods=())),
+    "up": Key(usb=UsbKey(code=0x52, mods=()), mcu=McuKey(code=0x4c, mods=())),
+    "ctrl": Key(usb=UsbKey(code=0x0, mods=(1,)), mcu=McuKey(code=0x0, mods=(77,))),
+    "shift": Key(usb=UsbKey(code=0x0, mods=(2,)), mcu=McuKey(code=0x0, mods=(78,))),
+    "alt": Key(usb=UsbKey(code=0x0, mods=(4,)), mcu=McuKey(code=0x0, mods=(79,))),
+    "meta": Key(usb=UsbKey(code=0x0, mods=(8,)), mcu=McuKey(code=0x0, mods=(80,))),
+    "rctrl": Key(usb=UsbKey(code=0x0, mods=(16,)), mcu=McuKey(code=0x0, mods=(81,))),
+    "rshift": Key(usb=UsbKey(code=0x0, mods=(32,)), mcu=McuKey(code=0x0, mods=(82,))),
+    "ralt": Key(usb=UsbKey(code=0x0, mods=(64,)), mcu=McuKey(code=0x0, mods=(83,))),
+    "rmeta": Key(usb=UsbKey(code=0x0, mods=(128,)), mcu=McuKey(code=0x0, mods=(84,))),
 }
 
 
@@ -469,13 +602,13 @@ def parse_and_send_cmd(gadget, line):
     mods = []
     while True:
         if key.startswith("ctrl-"):
-            mods += keycodes["ctrl"].usb.mods
+            mods += gadget.get_keycode("ctrl").mods
             key = key[len("ctrl-") :]
         elif key.startswith("shift-"):
-            mods += keycodes["shift"].usb.mods
+            mods += gadget.get_keycode("shift").mods
             key = key[len("shift-") :]
         elif key.startswith("alt-"):
-            mods += keycodes["alt"].usb.mods
+            mods += gadget.get_keycode("alt").mods
             key = key[len("alt-") :]
         else:
             break
@@ -484,9 +617,9 @@ def parse_and_send_cmd(gadget, line):
         print("Unknown key: {}".format(key))
         return
 
-    extra_mods, keycode = keycodes[key].usb
-    mods += extra_mods
-    gadget.write_keyboard_report(mods, keycode)
+    key = gadget.get_keycode(key)
+    mods += key.mods
+    gadget.write_keyboard_report(mods, key.code)
 
 
 async def handle_client(gadget, reader, writer):
@@ -506,6 +639,8 @@ async def main():
     parser.add_argument("--storage", default=[], action="store", nargs="*")
     parser.add_argument("--is-cdrom", default=False, action="store_true")
     parser.add_argument("--storage-only", default=False, action="store_true")
+    parser.add_argument("--ps2", default=False, action="store_true",
+                        help="Control via PS/2 kbd/mouse instead of USB, requires PiKVM PS2 bridge at /dev/ttyACM0")
     parser.add_argument(
         "--socket",
         default=None,
@@ -532,6 +667,8 @@ async def main():
     gadget_class = UsbHidGadget
     if args.storage_only:
         gadget_class = BaseGadget
+    elif args.ps2:
+        gadget_class = Ps2HidGadget
 
     with gadget_class(storage_path=storage, cdrom=args.is_cdrom) as gadget:
         if args.socket:

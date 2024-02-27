@@ -3,5 +3,5 @@ Description=USB gadget control
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/gadget-control --storage=/var/lib/openqa/pool/{{hostid}}/bootdisk.img --socket=/var/run/usb-gadget.sock --socket-group=_openqa-worker
+ExecStart=/usr/local/bin/gadget-control {{"--ps2" if ps2 else ""}} --storage=/var/lib/openqa/pool/{{hostid}}/bootdisk.img --socket=/var/run/usb-gadget.sock --socket-group=_openqa-worker
 KillSignal=SIGINT

@@ -21,6 +21,8 @@ openqa:
 
 gadget:
   thor_pubkey: SSH PUBKEY
+  # supported: usb, ps2; default: usb; ps2 requires https://docs.pikvm.org/pico_hid_bridge/
+  hid: usb
 
 boot:
   restore_efi: "IPV4"

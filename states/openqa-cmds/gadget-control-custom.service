@@ -5,5 +5,5 @@ ConditionPathExistsGlob=!/var/lib/openqa/pool/*/job.json
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/gadget-control --storage=/home/customboot/bootdisk.img --socket=/var/run/usb-gadget.sock --socket-group=customboot
+ExecStart=/usr/local/bin/gadget-control {{"--ps2" if ps2 else ""}} --storage=/home/customboot/bootdisk.img --socket=/var/run/usb-gadget.sock --socket-group=customboot
 KillSignal=SIGINT
