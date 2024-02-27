@@ -5,6 +5,16 @@ hostapd_pkgs:
       - iw
       - wireless-tools
 
+
+NetworkManager:
+  pkg.removed: []
+
+
+wicked:
+  pkg.installed: []
+  service.running:
+  - enable: True
+
 hostapd_service:
   service.running:
     - name: hostapd.service
