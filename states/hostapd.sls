@@ -73,6 +73,10 @@ dnsmasq_service:
     - require:
       - cmd: ifup wlan0
 
+# needed for /etc/init.d/boot.local
+systemd-sysvcompat:
+  pkg.installed: []
+
 /etc/init.d/boot.local:
   file.managed:
     - contents: |
@@ -80,6 +84,8 @@ dnsmasq_service:
 
         iptables -A POSTROUTING -t nat -o eth0 -s 192.168.0.0/24 -j MASQUERADE
         echo 1 > /proc/sys/net/ipv4/ip_forward
+        # shelly plug, if applicable
+        iptables -t nat -A PREROUTING -s 192.168.190.2 -p tcp --dport 81 -j DNAT --to 192.168.0.10:80
 
     - makedirs: True
     - mode: 0755
