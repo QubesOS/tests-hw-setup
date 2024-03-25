@@ -72,13 +72,14 @@ ustreamer-make:
     - require:
       - git: "https://github.com/pikvm/ustreamer"
       - pkg: kvmd-deps
+    - unless: test /var/lib/pikvm-sources/ustreamer/ustreamer -nt /var/lib/pikvm-sources/ustreamer/.git/index
 
 ustreamer-make-install:
   cmd.run:
     - name: make install WITH_PYTHON=1
     - cwd: /var/lib/pikvm-sources/ustreamer
     - runas: root
-    - require:
+    - onchanges:
       - cmd: ustreamer-make
 
 # simplify kvmd config, to not require repeating cmdline
@@ -117,6 +118,8 @@ kvmd-install:
     - require:
       - git: "https://github.com/pikvm/kvmd"
       - pkg: kvmd-deps
+    - onchanges:
+      - git: "https://github.com/pikvm/kvmd"
 
 /etc/kvmd:
   file.directory:

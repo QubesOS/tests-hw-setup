@@ -236,7 +236,7 @@ openqa-worker-user:
 
 systemctl daemon-reload:
   cmd.run:
-    - onchange:
+    - onchanges:
       - file: /etc/systemd/system/openqa-worker-ssh-agent.service
       - file: /etc/systemd/system/openqa-worker@.service.d/agent.conf
       - file: /etc/systemd/system/openqa-worker@.service.d/claim-sut.conf

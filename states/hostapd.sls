@@ -54,7 +54,11 @@ dnsmasq:
 
 # network.managed doesn't bring the interface either
 'ifup wlan0':
-  cmd.run: []
+  cmd.run:
+  - onchanges:
+    - file: /etc/sysconfig/network/ifcfg-wlan0
+  - require:
+    - pkg: wicked
 
 /etc/systemd/system/dnsmasq.service.d/30_order.conf:
   file.managed:
