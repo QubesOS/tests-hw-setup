@@ -99,6 +99,8 @@ EOF
 
 %end
 
+{{salt['pillar.get']('openqa:worker:kickstart-extra')}}
+
 %post --nochroot
 
 mkdir -p /mnt/sysimage/root/.ssh
