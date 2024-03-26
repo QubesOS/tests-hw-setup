@@ -88,7 +88,11 @@ workers-global:
         GENERAL_HW_FLASH_ARGS = --hostid={{ hostid }}
         GENERAL_HW_IMAGE_CMD = openqa-store-asset
         GENERAL_HW_IMAGE_ARGS = --hostid={{ hostid }}
+        {% if salt['pillar.get']('openqa:worker:ustreamer', False) -%}
+        GENERAL_HW_VIDEO_STREAM_URL = ustreamer:///dev/video0
+        {% else -%}
         GENERAL_HW_VIDEO_STREAM_URL = /dev/video0
+        {% endif -%}
         GENERAL_HW_EDID = file=/usr/local/openqa-cmds/1024x768.txt
         GENERAL_HW_INPUT_CMD = openqa-input
         GENERAL_HW_SOL_CMD = openqa-serial
