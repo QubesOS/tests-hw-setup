@@ -1,3 +1,5 @@
+{% set hosts = salt['pillar.get']('boot-hosts') %}
+
 /etc/ssh/sshd_config.d/thor.conf:
   file.managed:
   - source: salt://thor/ssh.conf
@@ -117,6 +119,7 @@ build sispmctl:
 
 /etc/lighttpd/conf-available/50-testboot.conf:
   file.managed:
+  - makedirs: True
   - contents: |
       alias.url += ( "/qinstall" => "/srv/tftp/qinstall" )
       alias.url += ( "/rescue/" => "/srv/tftp/rescue/" )
@@ -125,7 +128,14 @@ build sispmctl:
       alias.url += ( "/grub2-efi" => "/srv/tftp/grub2-efi" )
       alias.url += ( "/ipxe" => "/srv/tftp/ipxe" )
       alias.url += ( "/test" => "/srv/tftp/test" )
-  - makedirs: True
+{%- for host in hosts %}
+{%- set hostid = host | replace('hw', '') %}
+      $HTTP["url"] =~ "^/test{{hostid}}/" {
+        $HTTP["remoteip"] !~ "^172\.16\.{{hostid}}\." {
+           url.access-deny = ( "" )
+        }
+      }
+{%- endfor %}
 
 lighttpd-enable-mod testboot:
   cmd.run:
@@ -159,7 +169,6 @@ control:
   - source: salt://thor/grub2-efi
 
 
-{% set hosts = salt['pillar.get']('boot-hosts') %}
 {% for host in hosts %}
 {% set hostid = host | replace('hw', '') %}
 /srv/tftp/grub2-efi/testbed{{hostid}}-settings:
@@ -175,6 +184,20 @@ control:
 
 test{{hostid}}:
   user.present: []
+
+/home/test{{hostid}}:
+  file.directory:
+  - owner: root
+  - mode: 755
+
+/home/test{{hostid}}/.ssh:
+  file.directory:
+  - owner: root
+  - mode: 755
+  - file_mode: 644
+  - recurse:
+    - user
+    - mode
 
 /home/test{{hostid}}/boot:
   file.directory: []
