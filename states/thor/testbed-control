@@ -337,7 +337,7 @@ cmd_help() {
     echo " - poweroff - (hard) power off the target"
     echo " - rescue - switch next boot to rescue system (doesn't load anything from the disk)"
     echo " - fallback - switch next boot to fallback system (loads /boot/efi/EFI/qubes/grub-fallback.cfg)"
-    echo " - normal - switch next boot to normal system"
+    echo " - normal - switch next boot to normal system (entry with 'Qubes' in name in case of UEFI)"
     echo " - custom - switch next boot to custom grub config (/srv/tftp/test$1/grub.cfg)"
     echo " - openqa - switch next boot to openqa grub config (/srv/tftp/test$1/grub-openqa.cfg)"
     echo " - gitlab-ci - switch next boot to gitlab-ci grub config (/srv/tftp/test$1/grub-gitlab-ci.cfg)"
