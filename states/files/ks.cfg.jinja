@@ -22,7 +22,15 @@ else
 fi
 systemctl stop sshd.socket
 systemctl stop sshd.service
+# when kickstart used via OEM disk, inst.sshd is not used, remove the condition
+mkdir -p /etc/systemd/system/anaconda-sshd.service.d
+echo "[Unit]" > /etc/systemd/system/anaconda-sshd.service.d/10-disable-condition.conf
+echo "ConditionKernelCommandLine=" >> /etc/systemd/system/anaconda-sshd.service.d/10-disable-condition.conf
+systemctl daemon-reload
 systemctl restart anaconda-sshd
+
+# when kickstart used via OEM disk, networking isn't enabled by default - enable it now
+nmcli n on
 
 rm -f /etc/resolv.conf
 echo nameserver 192.168.190.3 > /etc/resolv.conf

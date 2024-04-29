@@ -68,10 +68,20 @@ create_bootdisk() {
     # fortunately Heads doesn't care
 }
 
+create_oemdisk() {
+    ln -s "$1" bootdisk.img
+    mkdir -p iso-tmp
+    cp /srv/www/htdocs/qinstall/ks.cfg iso-tmp/
+    mkfs.ext4 -d iso-tmp/ -L QUBES_OEM oem.img 16M
+    rm -rf iso-tmp
+}
+
 heads="$(jq -r .HEADS < vars.json)"
 usbboot="$(jq -r .USBBOOT < vars.json)"
 kernel_version="$(jq -r .KERNEL_VERSION < vars.json)"
+install_oem="$(jq -r .INSTALL_OEM_STARTUP < vars.json)"
 # convert "null" or "0" to empty
+if [ "$install_oem" != "1" ]; then install_oem=; fi
 if [ "$usbboot" != "1" ]; then usbboot=; fi
 if [ "$heads" = "1" ]; then usbboot=1; fi
 
@@ -79,6 +89,8 @@ if [ -f "$1" ]; then
     mount -t iso9660 -o ro,nodev,nosuid,noexec "$1" /srv/www/htdocs/qinstall/iso
     if [ -n "$usbboot" -a -f /root/bootdisk.img ]; then
         ln /root/bootdisk.img bootdisk.img
+    elif [ -n "$install_oem" ] && [ -n "$usbboot" ]; then
+        create_oemdisk "$1"
     elif [ -n "$usbboot" ]; then
         create_bootdisk "$1"
     fi

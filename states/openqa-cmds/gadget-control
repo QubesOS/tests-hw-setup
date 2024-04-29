@@ -55,15 +55,16 @@ class BaseGadget:
             self._create_storage_function()
 
     def _create_storage_function(self):
-        p = "functions/mass_storage.usb2/lun.0/"
-        self.set_sysfs_attr(p + "cdrom", "Y" if self.storage_cdrom else "N")  # is cdrom
-        self.set_sysfs_attr(p + "ro", "1")
-        self.set_sysfs_attr(p + "file", self.storage_path)  # backing file
-        self.set_sysfs_attr(p + "removable", "1")
-        os.symlink(
-            self.gadget_configfs_root / "functions/mass_storage.usb2",
-            self.gadget_configfs_root / "configs/c.1/mass_storage.usb2",
-        )
+        for storage, index in zip(self.storage_path, range(2, 5)):
+            p = f"functions/mass_storage.usb{index}/lun.0/"
+            self.set_sysfs_attr(p + "cdrom", "Y" if self.storage_cdrom else "N")  # is cdrom
+            self.set_sysfs_attr(p + "ro", "1")
+            self.set_sysfs_attr(p + "file", storage)  # backing file
+            self.set_sysfs_attr(p + "removable", "1")
+            os.symlink(
+                self.gadget_configfs_root / f"functions/mass_storage.usb{index}",
+                self.gadget_configfs_root / f"configs/c.1/mass_storage.usb{index}",
+            )
 
     def _get_gadget_dev(self, func):
         with open(self.gadget_configfs_root / (func + "/dev"), "r") as f:
@@ -636,7 +637,7 @@ async def handle_client(gadget, reader, writer):
 
 async def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--storage", default=[], action="store", nargs="*")
+    parser.add_argument("--storage", default=[], action="append")
     parser.add_argument("--is-cdrom", default=False, action="store_true")
     parser.add_argument("--storage-only", default=False, action="store_true")
     parser.add_argument("--ps2", default=False, action="store_true",
@@ -655,13 +656,12 @@ async def main():
     )
     args = parser.parse_args()
 
-    storage = None
+    storage = []
     if args.storage:
         for path in args.storage:
             if os.path.exists(path):
-                storage = path
-                break
-        else:
+                storage.append(path)
+        if not storage:
             print("None of {} exist, skipping storage emulation".format(args.storage))
 
     gadget_class = UsbHidGadget
