@@ -108,6 +108,14 @@ podman-pkgs:
     # default 'runc' fails on setting /proc/self/oom_score_adj
     - crun
 
+# https://github.com/containers/podman/blob/main/troubleshooting.md#26-running-containers-with-cpu-limits-fails-with-a-permissions-error
+/etc/systemd/system/user@.service.d/gitlab-runner-delegate.conf:
+  file.managed:
+  - makedirs: True
+  - contents: |
+      [Service]
+      Delegate=memory pids cpu cpuset
+
 gitlab-runner:
   pkg.installed:
    - require:
