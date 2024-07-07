@@ -124,6 +124,18 @@ if ! wait_boot; then
     exit 1
 fi
 
+retries=30
+while ! ssh_target test -b "$disk"; do
+    retries=$((retries - 1))
+    if [ $retries -le 0 ]; then
+	ssh_target dmesg
+	ssh_target xl dmesg
+        echo "Timeout waiting for $disk" >&2
+        exit 1
+    fi
+    sleep 1
+done
+
 if [ -n "$asset_path" ]; then
     # make sure it is really just snapshot id, not a full disk image
     if [ "$(stat -L -c %s "$asset_path")" -gt 16 ]; then
