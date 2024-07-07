@@ -60,14 +60,17 @@ nc -e '/bin/cat /dev/hvc0' -k -l 1100 </dev/null >/dev/null 2>&1 &
 #Boot0004* Qubes OS
 
 # restore PXE-first boot order; setup must be included, otherwise firmware refuses it
-{%- if salt['pillar.get']('boot:secondary_efi', '') %}
-{%- set secondary_find = '/' + salt['pillar.get']('boot:secondary_efi', 'Setup') + '/{setup=substr($1,5,4)}' %}
-{%- set secondary_order = '"," setup' %}
+{%- if salt['pillar.get']('boot:include_all_other_efi', False) %}
+{%- set secondary_find = '/^Boot[0-9]{4}\*/{other=other "," substr($1,5,4)}' %}
+{%- set secondary_order = ' other' %}
+{%- elif salt['pillar.get']('boot:secondary_efi', '') %}
+{%- set secondary_find = '/' + salt['pillar.get']('boot:secondary_efi', 'Setup') + '/{other=substr($1,5,4)}' %}
+{%- set secondary_order = '"," other' %}
 {% else %}
 {%- set secondary_find = '' %}
 {%- set secondary_order = '' %}
 {%- endif %}
-order=$(efibootmgr | awk '/{{salt['pillar.get']('boot:restore_efi')}}/{net=substr($1,5,4)} {{secondary_find}} END {print net {{secondary_order}} }')
+order=$(efibootmgr | awk '/{{salt['pillar.get']('boot:restore_efi')}}/{net=substr($1,5,4); next} {{secondary_find}} END {print net {{secondary_order}} }')
 efibootmgr -o "$order"
 
 # set (only) next boot to qubes
