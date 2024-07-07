@@ -203,7 +203,8 @@ test{{hostid}}:
   file.directory: []
 
 /srv/tftp/test{{hostid}}:
-  file.directory: []
+  file.directory:
+  - owner: test{{hostid}}
   mount.fstab_present:
   - fs_file: /home/test{{hostid}}/boot
   - fs_vfstype: auto
