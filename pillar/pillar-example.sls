@@ -14,6 +14,10 @@ openqa:
     # optional extra xen options to setup com1
     serial_xen_opts: com1=115200,8n1
     ustreamer: True
+    kickstart-extra: |
+      %post
+      echo something to do after install
+      %end
 
   hosts:
     openqa.qubes-os.org:
