@@ -6,12 +6,17 @@
 
         u kvmd - "PiKVM - The main daemon" -
         u kvmd-vnc - "PiKVM - VNC to KVMD/Streamer proxy" -
+        u kvmd-janus - "PiKVM - Janus WebRTC Gateywa" -
 
         m kvmd video
 
         m kvmd-vnc kvmd
 
+        m kvmd-janus kvmd
+        m kvmd-janus audio
+
         m nginx kvmd
+        m nginx kvmd-janus
 
 systemd-sysusers /usr/lib/sysusers.d/kvmd.conf:
   cmd.run:
@@ -47,6 +52,20 @@ kvmd-deps:
       - python3-pipx
       - python3-netifaces
       - python3-async-lru
+      - automake
+      - autoconf
+      - libtool
+      - openssl-devel
+      - libnice-devel
+      - libconfig-devel
+      - libsrtp-devel
+      - libwebsockets-devel
+      - gengetopt
+      - alsa-devel
+      - glib2-devel
+      - speex-devel
+      - libopus-devel
+      - libjansson-devel
 
 /var/lib/pikvm-sources:
   file.directory:
@@ -54,6 +73,102 @@ kvmd-deps:
     - group: kvmd
     - require:
       - cmd: systemd-sysusers /usr/lib/sysusers.d/kvmd.conf
+
+######################
+### janus-gateway 0.14
+######################
+
+https://github.com/meetecho/janus-gateway:
+  git.latest:
+  - target: /var/lib/pikvm-sources/janus-gateway
+  - branch: 0.14
+  - rev: 99e133bc00cb910186a34b4e2083821cb6c111fc
+  - user: kvmd
+  - require:
+    - file: /var/lib/pikvm-sources
+
+/var/lib/pikvm-sources/janus-gateway:
+  file.patch:
+    - source: salt://files/janus-gateway-0001-unmute-hack.patch
+    - strip: 1
+
+janus-make:
+  cmd.run:
+    - name: >
+        ./autogen.sh &&
+        ./configure \
+            --sysconfdir=/etc \
+            --disable-docs \
+            --disable-data-channels \
+            --disable-turn-rest-api \
+            --disable-all-plugins \
+            --disable-all-loggers \
+            --disable-all-transports \
+            --enable-websockets \
+            --disable-sample-event-handler \
+            --disable-websockets-event-handler \
+            --disable-gelf-event-handler &&
+        make
+    - cwd: /var/lib/pikvm-sources/janus-gateway
+    - runas: kvmd
+    - require:
+      - git: "https://github.com/meetecho/janus-gateway"
+      - file: /var/lib/pikvm-sources/janus-gateway
+      - pkg: kvmd-deps
+    - unless: test /var/lib/pikvm-sources/janus-gateway/janus -nt /var/lib/pikvm-sources/janus-gateway/.git/index
+
+# install to temp dir, as janus's makefile try to get git hash, and this fails as root from non root-owned .git
+janus-make-install:
+  cmd.run:
+    - name: make install DESTDIR=/var/lib/pikvm-sources/janus-gateway-bin
+    - cwd: /var/lib/pikvm-sources/janus-gateway
+    - runas: kvmd
+    - onchanges:
+      - cmd: janus-make
+
+/usr/local/bin/janus:
+  file.copy:
+    - source: /var/lib/pikvm-sources/janus-gateway-bin/usr/local/bin/janus
+    - makedirs: True
+    - dir_mode: 755
+
+# file.copy can't recurse...
+"rm -rf /usr/local/lib/janus/transports && mkdir -p /usr/local/lib/janus && cp -rd /var/lib/pikvm-sources/janus-gateway-bin/usr/local/lib/janus/transports /usr/local/lib/janus/transports":
+  cmd.run:
+  - onchanges:
+    - cmd: janus-make-install
+
+"rm -rf /usr/local/include/janus && cp -rd /var/lib/pikvm-sources/janus-gateway-bin/usr/local/include/janus /usr/local/include/":
+  cmd.run:
+  - onchanges:
+    - cmd: janus-make-install
+
+/usr/local/share/janus/javascript/janus.js-copy:
+  file.copy:
+  - name: /usr/local/share/janus/javascript/janus.js
+  - source: /var/lib/pikvm-sources/janus-gateway-bin/usr/local/share/janus/javascript/janus.js
+  - makedirs: True
+  - dir_mode: 755
+
+/usr/local/share/janus/javascript/adapter.js:
+  file.managed:
+  - source: "https://webrtc.github.io/adapter/adapter-latest.js"
+  - source_hash: a89e28bb427371961bd33fb4f781b5d6d4010073ae6203f91b6a934f262fcc3c
+
+/usr/local/share/janus/javascript/janus.js-prepend:
+  file.prepend:
+  - name: /usr/local/share/janus/javascript/janus.js
+  - text: "import \"./adapter.js\""
+  - require:
+    - file: /usr/local/share/janus/javascript/janus.js-copy
+
+/usr/local/share/janus/javascript/janus.js-export:
+  file.replace:
+  - name: /usr/local/share/janus/javascript/janus.js
+  - pattern: "^function Janus\\("
+  - repl: "export function Janus("
+  - require:
+    - file: /usr/local/share/janus/javascript/janus.js-copy
 
 #############
 ### ustreamer
@@ -70,8 +185,10 @@ https://github.com/pikvm/ustreamer:
 
 ustreamer-make:
   cmd.run:
-    - name: make
+    - name: make WITH_PYTHON=1 WITH_JANUS=1
     - cwd: /var/lib/pikvm-sources/ustreamer
+    - env:
+      - CFLAGS: "-I/usr/local/include/janus"
     - runas: kvmd
     - require:
       - git: "https://github.com/pikvm/ustreamer"
@@ -80,7 +197,7 @@ ustreamer-make:
 
 ustreamer-make-install:
   cmd.run:
-    - name: make install WITH_PYTHON=1
+    - name: make install WITH_PYTHON=1 WITH_JANUS=1
     - cwd: /var/lib/pikvm-sources/ustreamer
     - runas: root
     - onchanges:
@@ -161,6 +278,37 @@ kvmd-install:
 {{ copy_kvmd_file("configs/os/services/kvmd.service", "/etc/systemd/system/kvmd.service") }}
 {{ copy_kvmd_file("configs/os/services/kvmd-vnc.service", "/etc/systemd/system/kvmd-vnc.service") }}
 {{ copy_kvmd_file("configs/os/services/kvmd-otg.service", "/etc/systemd/system/kvmd-otg.service") }}
+{{ copy_kvmd_file("configs/os/services/kvmd-janus-static.service", "/etc/systemd/system/kvmd-janus-static.service") }}
+
+
+/etc/systemd/system/kvmd-janus-static.service.d/paths.conf:
+  file.managed:
+  - contents: |
+      [Service]
+      ExecStart=
+      ExecStart=/usr/local/bin/janus --disable-colors --plugins-folder=/usr/local/lib/ustreamer/janus --configs-folder=/etc/kvmd/janus
+  - makedirs: True
+  - mode: 644
+
+/etc/systemd/system/kvmd-janus-static.service.d/deps.conf:
+  file.managed:
+  - contents: |
+      [Unit]
+      PartOf=kvmd.service
+  - makedirs: True
+  - mode: 644
+
+/etc/systemd/system/kvmd.service.d/janus.conf:
+  file.managed:
+  - contents: |
+      [Unit]
+      Wants=kvmd-janus-static.service
+  - makedirs: True
+  - mode: 644
+
+/etc/kvmd/janus:
+  file.symlink:
+  - target: /var/lib/pikvm-sources/kvmd/configs/janus
 
 /etc/kvmd/nginx:
   file.symlink:
@@ -169,6 +317,10 @@ kvmd-install:
 /etc/nginx/conf.d/kvmd.ctx-http.conf:
   file.symlink:
   - target: /etc/kvmd/nginx/kvmd.ctx-http.conf
+
+/etc/nginx/conf.d/janus.ctx-http.conf:
+  file.copy:
+  - source: /var/lib/pikvm-sources/kvmd/extras/janus/nginx.ctx-http.conf
 
 /etc/nginx/vhosts.d/kvmd.conf:
   file.managed:
@@ -183,6 +335,23 @@ kvmd-install:
               alias /srv/www/htdocs/gitlab-ci;
           }
           include /etc/kvmd/nginx/kvmd.ctx-server.conf;
+          location /janus/ws {
+              rewrite ^/janus/ws$ / break;
+              rewrite ^/janus/ws\?(.*)$ /?$1 break;
+              proxy_pass http://janus-ws;
+              include /etc/kvmd/nginx/loc-proxy.conf;
+              include /etc/kvmd/nginx/loc-websocket.conf;
+          }
+
+          location = /share/js/kvm/janus.js {
+              alias /usr/local/share/janus/javascript/janus.js;
+              include /etc/kvmd/nginx/loc-nocache.conf;
+          }
+
+          location = /share/js/kvm/adapter.js {
+              alias /usr/local/share/janus/javascript/adapter.js;
+              include /etc/kvmd/nginx/loc-nocache.conf;
+          }
       }
 
 # restore "video" group to allow openqa access, kvmd is a member of the group anyway
@@ -229,6 +398,12 @@ kvmd-install:
 /usr/share/kvmd/extras:
   file.directory:
    - makedirs: True
+
+/usr/share/kvmd/extras/janus-static/manifest.yaml:
+  file.copy:
+  - source: /var/lib/pikvm-sources/kvmd/extras/janus-static/manifest.yaml
+  - makedirs: True
+  - mode: 0755
 
 /usr/share/kvmd/web:
   file.symlink:
