@@ -45,6 +45,8 @@ kvmd-deps:
       - python3-zstandard
       - python3-psutil
       - python3-pipx
+      - python3-netifaces
+      - python3-async-lru
 
 /var/lib/pikvm-sources:
   file.directory:
@@ -99,7 +101,7 @@ https://github.com/pikvm/kvmd:
   git.latest:
     - target: /var/lib/pikvm-sources/kvmd
     - branch: master
-    - rev: f34685d91fc5638668d269808382e9bed2ac97e9
+    - rev: d14757e107215219165e2894c197e6ad563a7d61
     - user: kvmd
     - require:
       - file: /var/lib/pikvm-sources
@@ -172,6 +174,7 @@ kvmd-install:
   file.managed:
   - contents: |
       server {
+          listen 80;
           server_name {{grains['id']}}.testnet {{grains['id']}};
           location /qinstall {
               alias /srv/www/htdocs/qinstall;
@@ -179,7 +182,6 @@ kvmd-install:
           location /gitlab-ci {
               alias /srv/www/htdocs/gitlab-ci;
           }
-          include /etc/kvmd/nginx/listen-http.conf;
           include /etc/kvmd/nginx/kvmd.ctx-server.conf;
       }
 
