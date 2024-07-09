@@ -11,6 +11,8 @@
 
         m kvmd-vnc kvmd
 
+        m nginx kvmd
+
 systemd-sysusers /usr/lib/sysusers.d/kvmd.conf:
   cmd.run:
     - onchanges:
@@ -158,6 +160,29 @@ kvmd-install:
 {{ copy_kvmd_file("configs/os/services/kvmd-vnc.service", "/etc/systemd/system/kvmd-vnc.service") }}
 {{ copy_kvmd_file("configs/os/services/kvmd-otg.service", "/etc/systemd/system/kvmd-otg.service") }}
 
+/etc/kvmd/nginx:
+  file.symlink:
+  - target: /var/lib/pikvm-sources/kvmd/configs/nginx
+
+/etc/nginx/conf.d/kvmd.ctx-http.conf:
+  file.symlink:
+  - target: /etc/kvmd/nginx/kvmd.ctx-http.conf
+
+/etc/nginx/vhosts.d/kvmd.conf:
+  file.managed:
+  - contents: |
+      server {
+          server_name {{grains['id']}}.testnet {{grains['id']}};
+          location /qinstall {
+              alias /srv/www/htdocs/qinstall;
+          }
+          location /gitlab-ci {
+              alias /srv/www/htdocs/gitlab-ci;
+          }
+          include /etc/kvmd/nginx/listen-http.conf;
+          include /etc/kvmd/nginx/kvmd.ctx-server.conf;
+      }
+
 # restore "video" group to allow openqa access, kvmd is a member of the group anyway
 /etc/udev/rules.d/99-kvmd-fixup.rules:
   file.managed:
@@ -202,6 +227,10 @@ kvmd-install:
 /usr/share/kvmd/extras:
   file.directory:
    - makedirs: True
+
+/usr/share/kvmd/web:
+  file.symlink:
+  - target: /var/lib/pikvm-sources/kvmd/web
 
 cp -r /var/lib/pikvm-sources/kvmd/contrib/keymaps /usr/share/kvmd/:
   cmd.run:
