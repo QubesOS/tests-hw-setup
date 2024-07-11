@@ -219,6 +219,7 @@ https://github.com/pikvm/kvmd:
     - target: /var/lib/pikvm-sources/kvmd
     - branch: master
     - rev: d14757e107215219165e2894c197e6ad563a7d61
+    - force_reset: true
     - user: kvmd
     - require:
       - file: /var/lib/pikvm-sources
