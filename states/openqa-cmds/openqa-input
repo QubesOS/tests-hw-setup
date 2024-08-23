@@ -1,3 +1,3 @@
 #!/bin/sh
 
-exec socat -u - UNIX:/var/run/usb-gadget.sock
+exec socat - UNIX:/var/run/usb-gadget.sock

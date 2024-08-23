@@ -630,8 +630,11 @@ async def handle_client(gadget, reader, writer):
             break
         try:
             parse_and_send_cmd(gadget, line.strip())
+            writer.write(b"ok\n")
+            await writer.drain()
         except BrokenPipeError:
-            print("failed to send '{}' - USB disconnected".format(line.strip()))
+            writer.write("error: failed to send '{}' - USB disconnected".format(line.strip()).encode())
+            await writer.drain()
     writer.close()
 
 
@@ -684,8 +687,9 @@ async def main():
             for line in fileinput.input(files=[]):
                 try:
                     parse_and_send_cmd(gadget, line.strip())
+                    print("ok")
                 except BrokenPipeError:
-                    print("failed to send '{}' - USB disconnected".format(line.strip()))
+                    print("error: failed to send '{}' - USB disconnected".format(line.strip()))
 
 
 if __name__ == "__main__":
