@@ -3,8 +3,6 @@ dev="$1"
 [ -n "$dev" ] || exit 1
 while ! picocom -b 115200 -q "$dev" 2>/dev/null; do
     echo "*** DISCONNECTED ***"
-    while ! [ -c "$dev" ]; do
-        sleep .1
-    done
+    udevadm wait "$dev"
     echo "*** RECONNECTING ***"
 done
