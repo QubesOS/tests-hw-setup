@@ -16,10 +16,35 @@ sshpw --username root --sshkey "{{salt['pillar.get']('openqa:worker:ssh_pubkey',
 %pre
 ps aux > /tmp/pre.ps
 if grep -q 4.0 /etc/qubes-release; then
-    systemd-run --on-active=15s xrandr -display :1 --output eDP1 --mode 1024x768 --same-as HDMI1
+    internal=eDP1
+    hdmi=HDMI1
 else
-    systemd-run --on-active=15s xrandr -display :1 --output {{salt['pillar.get']('xrandr:internal-output', 'eDP-1')}} --mode 1024x768 --same-as HDMI-1
+    internal={{salt['pillar.get']('xrandr:internal-output', 'eDP-1')}}
+    hdmi=HDMI-1
 fi
+# gnome-kiosk configures outputs on its own, the below xorg.conf snippet will
+# properly choose the resolution, but position needs to be reset via xrandr anyway...
+systemd-run --on-active=15s xrandr -display :1 --output "$internal" --mode 1024x768 --same-as "$hdmi"
+cat <<EOF >/etc/X11/xorg.conf.d/30-monitor-layout.conf
+Section "Monitor"
+    Identifier  "panel"
+    Option      "Position" "0 0"
+    Option      "PreferredMode" "1024x768"
+EndSection
+Section "Monitor"
+    Identifier  "HDMI"
+    Option      "Position" "0 0"
+    Option      "PreferredMode" "1024x768"
+    Option      "Primary" "true"
+EndSection
+Section "OutputClass"
+    Identifier   "PrimaryGPU"
+    # must be set explicitly, unfortunately
+    Driver       "modesetting"
+    Option       "Monitor-$internal" "panel"
+    Option       "Monitor-$hdmi" "HDMI"
+EndSection
+EOF
 systemctl stop sshd.socket
 systemctl stop sshd.service
 # when kickstart used via OEM disk, inst.sshd is not used, remove the condition
@@ -98,6 +123,7 @@ Section "Monitor"
     Identifier  "HDMI"
     Option      "Position" "0 0"
     Option      "PreferredMode" "1024x768"
+    Option      "Primary" "true"
 EndSection
 Section "OutputClass"
     Identifier   "PrimaryGPU"
@@ -107,6 +133,11 @@ Section "OutputClass"
     Option       "Monitor-$hdmi" "HDMI"
 EndSection
 EOF
+
+if grep -q weston /usr/libexec/initial-setup/run-gui-backend; then
+sed -i -e '/xwayland/a [output]\nname='$internal'\nmode=off\n' \
+	/usr/libexec/initial-setup/run-gui-backend
+fi
 
 %end
 
