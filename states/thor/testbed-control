@@ -249,6 +249,8 @@ cmd_wake() {
         ssh control@$hal power
     elif [ "$1" -eq 14 ]; then
         ssh control@$hal power
+    elif [ "$1" -eq 15 ]; then
+        ssh control@$hal power
     else
         echo "not supported"
         return 1
@@ -305,6 +307,9 @@ cmd_console() {
         ssh -t console@$hal connect-serial-console /dev/ttyUSB0
         return
     elif [ "$target" = 13 ]; then
+        ssh -t console@$hal connect-serial-console /dev/ttyUSB0
+        return
+    elif [ "$target" = 15 ]; then
         ssh -t console@$hal connect-serial-console /dev/ttyUSB0
         return
     fi
