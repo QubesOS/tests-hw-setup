@@ -38,7 +38,7 @@ dnsmasq:
   file.managed:
     - contents: |
         #dhcp-host={{ salt['pillar.get']('hostapd:client_mac') }},{{ salt['pillar.get']('hostapd:client_ip', '192.168.0.100' ) }}
-        dhcp-range=192.168.0.100,192.168.0.100,3m
+        dhcp-range=192.168.0.100,192.168.0.100,2m
         listen-address=192.168.0.1
         bind-interfaces
     - watch_in:
