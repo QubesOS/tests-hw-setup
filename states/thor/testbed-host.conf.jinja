@@ -1,0 +1,7 @@
+power="{{power}}"
+send-bootfiles={{send_bootfiles|lower}}
+gitlab={{gitlab|lower}}
+console="{{console}}"
+{% if kvm_services != "default" -%}
+kvm-services="{{kvm_services}}"
+{% endif -%}

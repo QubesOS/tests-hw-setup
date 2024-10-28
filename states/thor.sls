@@ -25,6 +25,7 @@ packages:
     - python3-luma.led-matrix
     - python3-rpi.gpio
     - python3-setuptools
+    - python3-requests
     - rsync
     - sudo
     - tcpdump
@@ -178,9 +179,11 @@ control:
       testbedid={{hostid}}
       {{hosts[host].get("grub-settings", "")|indent(6)}}
 
+{% if hosts[host].get("mac", "") -%}
 "/srv/tftp/grub2-efi/env-{{hosts[host]["mac"]}}-settings":
   file.symlink:
   - target: testbed{{hostid}}-settings
+{% endif %}
 
 test{{hostid}}:
   user.present: []
@@ -219,6 +222,23 @@ test{{hostid}}:
       cmdline_xen: "{{hosts[host].get("cmdline-xen", "")}}"
       cmdline_linux: "{{hosts[host].get("cmdline-linux", "")}}"
       kernel_suffix: "{{hosts[host].get("kernel-suffix", "")}}"
+
+/etc/testbed/hosts/{{hostid}}.conf:
+  file.managed:
+  - source: salt://thor/testbed-host.conf.jinja
+  - makedirs: True
+  - template: jinja
+  - context:
+      hostid: {{hostid}}
+      power: {{hosts[host].get("power", "")}}
+      {% if hosts[host].get("mac", "") -%}
+      send_bootfiles: False
+      {% else -%}
+      send_bootfiles: True
+      {% endif -%}
+      gitlab: {{hosts[host].get("gitlab", False)}}
+      console: {{hosts[host].get("console", "hal-connect-USB0")}}
+      kvm_services: {{hosts[host].get("kvm-services", "default")}}
 
 {% endfor %}
 

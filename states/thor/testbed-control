@@ -1,398 +1,447 @@
-#!/bin/sh
+#!/usr/bin/python3
 
-set -e
+import os
+import sys
+import subprocess
+import fcntl
+import time
+import logging
+import logging.handlers
+import functools
+import tomllib
 
-target="$1"
-if ! [ "$target" -gt 0 ]; then
-    echo "Invalid target $target! Must be in 1-4 range" >&2
-    exit 1
-fi
-shift
+import requests
 
-if [ "$1" = "ssh" ]; then
-    commands=$(echo "$SSH_ORIGINAL_COMMAND" | grep -o '[a-z: ]*'|head -n 1)
-else
-    commands="$*"
-fi
+configdir = "/etc/testbed"
+bootconfdir = "/srv/tftp/grub2-efi"
+lockdir = "/run/testbed-control"
+rescuedir = "/srv/tftp/rescue"
 
-bootconfdir=/srv/tftp/grub2-efi
-lockdir=/run/testbed-control
+"""
+Host config format
+==================
 
-mkdir -p "$lockdir"
+Subset of TOML, specifically:
 
-logger -- "testbed-control $target: $commands"
+  key = "value"
 
-# if changing this, adjust lock() function too
-LOCK_FD=9
+Config options
+--------------
 
-# POSIX shell doesn't support variable substitution in exec $fd<>...
-if [ -e "/proc/self/fd/$LOCK_FD" ]; then
-    echo "FD $LOCK_FD busy, cannot continue" >&2
-    exit 1
-fi
+### power
 
-lock() {
-    local what="$1"
-    [ -n "$what" ]
-    # 9 is $LOCK_FD
-    [ 9 -eq "$LOCK_FD" ]
-    exec 9>"$lockdir/$what"
-    flock "$LOCK_FD"
-}
+Space separated list of actions; possible options:
+- sispm:SERIAL:SOCKET - Gembird EG-PMS2 device using sispmctl tool
+  - SERIAL - device serial (example: 00:11:22:33:44)
+  - SOCKET - socket number (1-4)
+- shelly:IP:PORT - Shelly smart plug via http API
+  - IP - device IP
+  - PORT - port number
+- wol:IF:MAC - send wake-on-lan signal
+  - IF - network interface name
+  - MAC - mac address to send to
+- hal-wol:IF:MAC - send wake-on-lan signal via HAL host (uses service-control account)
+  - IF - network interface name
+  - MAC - mac address to send to
+- hal-button - press power button via HAL host (uses "control" account)
+- hal-wake-button - press power button via HAL host (uses "control" account) -
+  same as hal-button, but press it only to wakeup from sleep, not on poweron
+- boot-menu - call "boot-menu-interact USB" script on the hal host when boot mode
+  is set to "custom"; it's supposed to navigate boot menu (for example via serial
+  console or USB HID) to select booting from USB; useful together with "send-bootfiles=true"
 
-get_powerstrip_arg() {
-    case "$1" in
-        1|2|3|4) echo "-D 01:01:5f:1d:11" ;;
-        5|6|7|8) echo "-D 01:01:4f:5f:06" ;;
-        9|10|11|12) echo "-D 01:01:4b:98:f1" ;;
-        *) echo "UNKNOWN PORT $1!" >&2; echo "-D INVALID" ;;
-    esac
-}
+### send-bootfiles
 
-hal_hostname() {
-    echo "hal90$(printf %02d "$1").testnet"
-}
+Boolean. If set to true, setting boot "custom" boot mode will also send boot
+files from thor to hal. Useful for testbeds not doing network boot, but using
+the (emulated) USB instead.
 
-get_outlet_arg() {
-    echo "$(( ( $1 - 1 ) % 4 + 1 ))"
-}
+### gitlab
 
-get_current_mode() {
-    if ! [ -e "$bootconfdir/testbed${1}-default" ]; then
-        echo "Boot mode for $1 not set!" >&2
-        return 1
-    fi
-    local link
-    link=$(readlink "$bootconfdir/testbed${1}-default")
-    echo ${link#env-boot-}
-}
+Does this testbed have gitlab-runner?
 
-get_current_claim() {
-    local claimfile="$bootconfdir/testbed$1-claim"
-    if ! [ -e "$claimfile" ]; then
-        return 0
-    fi
-    head -1 "$claimfile"
-}
+### console
 
-has_gitlab() {
-    case "$1" in
-        2|11) return 0;;
-        *) return 1;;
-    esac
-}
+How testbed's serial console can be accessed. Supported values:
+- hal-picocom-AMA1 - connect to to /dev/ttyAMA1 on the hal host (via "console" ssh account)
+- hal-connect-USB0 - connect to /dev/ttyUSB0 on the hal host, using connect-serial-console script (via "console" ssh account)
+- local - connect to /dev/console-test(hostid) on the thor host (make it a symlink to the right device using udev)
 
-cmd_claim() {
-    local claimfile="$bootconfdir/testbed$1-claim"
-    # supported claims
-    case "$2" in
-        (gitlab|openqa|manual) ;;
-        (*) echo "Unsupported claim: $2" >&2; exit 1;;
-    esac
-    if [ -e "$claimfile" ]; then
-        # allow re-claiming by the same entity
-        local current_claim=$(get_current_claim "$1")
-        if [ "$current_claim" = "$2" ]; then
-            return 0
-        fi
-        echo "Testbed $1 already claimed by $current_claim"
-        return 1
-    fi
-    local hal=$(hal_hostname "$1")
-    if [ "$2" != "gitlab" ] && has_gitlab "$1"; then
-        ssh service-control@$hal sudo systemctl stop gitlab-runner.service
-    fi
-    if [ "$2" != "openqa" ]; then
-        ssh service-control@$hal sudo systemctl stop openqa-worker.target
-    fi
-    echo "$2" > "$claimfile"
-}
+### kvm-services
 
-cmd_release() {
-    local claimfile="$bootconfdir/testbed$1-claim"
-    local current_claim=$(get_current_claim "$1")
-    if [ "$current_claim" != "$2" ]; then
-        echo "Currently in use by $current_claim, not $2" >&2
-        return 1
-    fi
-    local hal=$(hal_hostname "$1")
-    if [ "$2" != "gitlab" ] && has_gitlab "$1"; then
-        ssh service-control@$hal sudo systemctl start gitlab-runner.service
-    fi
-    if [ "$2" != "openqa" ]; then
-        ssh service-control@$hal sudo systemctl start openqa-worker.target
-        ssh service-control@$hal sudo systemctl start openqa-worker-cacheservice.service
-        ssh service-control@$hal sudo systemctl start openqa-worker-cacheservice-minion.service
-    fi
-    rm -f "$claimfile"
-}
+List of systemd services to start/stop when enabling network KVM access.
+Default: kvmd-otg.service kvmd.service kvmd-vnc.service
 
-cmd_poweroff() {
-    lock "power"
-    echo -n "Powering off $1... "
-    if [ "$1" -le 12 ]; then
-        sispmctl $(get_powerstrip_arg "$1") -f $(get_outlet_arg "$1")
-    fi
-    if [ "$1" -eq 13 ]; then
-        local hal=$(hal_hostname "$1")
-        shelly-control "$hal" off
-    fi
-    if [ "$1" -eq 14 ]; then
-        local hal=$(hal_hostname "$1")
-        shelly-control "$hal" off
-    fi
-    if [ "$1" -eq 15 ]; then
-        local hal=$(hal_hostname "$1")
-        shelly-control "$hal" off
-    fi
-    stripes "$1" "off" || :
-}
+Set to empty to disable KVM on this testbed.
 
-cmd_poweron() {
-    lock "power"
-    echo -n "Powering on $1... "
+"""
 
-    if [ "$1" -le 12 ]; then
-        sispmctl $(get_powerstrip_arg "$1") -o $(get_outlet_arg "$1")
-    fi
-    local hal=$(hal_hostname "$1")
-    if [ "$1" -eq 2 ]; then
-        sleep 5
-        ssh control@$hal power
-    fi
-    if [ "$1" -eq 4 ]; then
-        sleep 3
-        ssh service-control@$hal sudo ether-wake -i eth0 e8:6a:64:5a:68:12
-    fi
-    if [ "$1" -eq 5 ]; then
-        sleep 3
-        ssh control@$hal power
-    fi
-    if [ "$1" -eq 6 ]; then
-        sleep 3
-        ssh control@$hal power
-    fi
-    if [ "$1" -eq 7 ]; then
-        # handle boot menu via serial...
-        if [ "$(get_current_mode "$1")" = "custom" ]; then
-            ssh console@$hal boot-menu-interact USB >/dev/null
-        fi
-    fi
-    if [ "$1" -eq 8 ]; then
-        sleep 3
-        ssh control@$hal power
-    fi
-    if [ "$1" -eq 9 ]; then
-        sleep 3
-        ssh control@$hal power
-    fi
-    if [ "$1" -eq 12 ]; then
-        sleep 5
-        ssh control@$hal power
-    fi
-    if [ "$1" -eq 13 ]; then
-        shelly-control "$hal" on
-        sleep 3
-        ssh control@$hal power
-    fi
-    if [ "$1" -eq 14 ]; then
-        shelly-control "$hal" on
-        sleep 3
-        ssh control@$hal power
-    fi
-    if [ "$1" -eq 15 ]; then
-        shelly-control "$hal" on
-        sleep 3
-        ssh control@$hal power
-    fi
-    echo "done"
-    stripes "$1" "on" || :
-}
+class Lock:
+    def __init__(self, name):
+        self.path = os.path.join(lockdir, name)
+        self.fd = -1
 
-cmd_reset() {
-    cmd_poweroff "$1"
-    sleep 3
-    cmd_poweron "$1"
-}
+    def __enter__(self):
+        assert self.fd == -1
+        self.fd = os.open(self.path, os.O_WRONLY | os.O_CREAT)
+        fcntl.flock(self.fd, fcntl.LOCK_EX)
+        return self
 
-cmd_wake() {
-    lock "power"
-    echo -n "Waking up $1... "
-    local hal=$(hal_hostname "$1")
-    if [ "$1" -eq 1 ]; then
-        #etherwake 30:24:A9:90:66:FC
-        ssh control@$hal power
-    elif [ "$1" -eq 2 ]; then
-        #etherwake D8:BB:C1:DD:9F:D6
-        ssh control@$hal power
-    elif [ "$1" -eq 4 ]; then
-        etherwake e8:6a:64:5a:68:12
-    elif [ "$1" -eq 5 ]; then
-        ssh control@$hal power
-    elif [ "$1" -eq 6 ]; then
-        ssh control@$hal power
-    elif [ "$1" -eq 7 ]; then
-        ssh control@$hal power
-    elif [ "$1" -eq 8 ]; then
-        #etherwake 30:24:A9:90:66:FC
-        ssh control@$hal power
-    elif [ "$1" -eq 9 ]; then
-        ssh control@$hal power
-    elif [ "$1" -eq 10 ]; then
-        ssh control@$hal power
-    elif [ "$1" -eq 11 ]; then
-        #etherwake 58:47:ca:70:ce:df
-        ssh service-control@$hal sudo ether-wake -i eth0 58:47:ca:70:ce:df
-    elif [ "$1" -eq 12 ]; then
-        ssh control@$hal power
-    elif [ "$1" -eq 13 ]; then
-        ssh control@$hal power
-    elif [ "$1" -eq 14 ]; then
-        ssh control@$hal power
-    elif [ "$1" -eq 15 ]; then
-        ssh control@$hal power
-    else
-        echo "not supported"
-        return 1
-    fi
-    echo "done"
-}
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        assert self.fd != -1
+        os.close(self.fd)
+        self.fd = -1
 
-send_bootfiles() {
-    echo "Sending boot files for target $1"
-    local hal=$(hal_hostname "$1")
-    if [ "$2" = "normal" ]; then
-        # just disable the thing
-        ssh customboot@$hal customboot-build </dev/null || :
-    elif [ "$2" = "custom" ]; then
-        tar c -C /srv/tftp/test${1} . | ssh customboot@$hal customboot-build
-    fi
-}
+    # work as decorator too
+    def __call__(self, func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            with self:
+                return func(*args, **kwargs)
+        return wrapper
 
-cmd_switchboot() {
-    lock "power"
-    echo -n "Setting boot mode for $1 to $2... "
-    if ! [ -e "$bootconfdir/env-boot-$2" ]; then
-        echo "Invalid boot option $2" >&2
-        return 1
-    fi
-    ln -snf "env-boot-$2" "$bootconfdir/testbed$1-default"
-    echo "done"
-    case "$1" in
-        7) send_bootfiles "$1" "$2";;
-    esac
-    stripes "$1" "$2" || :
-}
 
-cmd_console() {
-    local target="$1"
-    lock "console-$1"
-    local hal=$(hal_hostname "$1")
-    if [ "$target" = 7 ]; then
-        ssh -t console@$hal picocom --send-cmd=false --receive-cmd=false -b 115200 /dev/ttyAMA1
-        return
-    elif [ "$target" = 2 ]; then
-        ssh -t console@$hal picocom --send-cmd=false --receive-cmd=false -b 115200 /dev/ttyAMA1
-        return
-    elif [ "$target" = 1 ]; then
-        ssh -t console@$hal connect-serial-console /dev/ttyUSB0
-        return
-    elif [ "$target" = 3 ]; then
-        ssh -t console@$hal connect-serial-console /dev/ttyUSB0
-        return
-    elif [ "$target" = 9 ]; then
-        ssh -t console@$hal connect-serial-console /dev/ttyUSB0
-        return
-    elif [ "$target" = 11 ]; then
-        ssh -t console@$hal connect-serial-console /dev/ttyUSB0
-        return
-    elif [ "$target" = 13 ]; then
-        ssh -t console@$hal connect-serial-console /dev/ttyUSB0
-        return
-    elif [ "$target" = 15 ]; then
-        ssh -t console@$hal connect-serial-console /dev/ttyUSB0
-        return
-    fi
-    if ! [ -c "/dev/console-test$target" ]; then
-        echo "Console for test$target is not connected";
-        return 1
-    fi
-    picocom --send-cmd=false --receive-cmd=false -b 115200 "/dev/console-test$target"
-}
+class Testbed:
+    def __init__(self, hostid):
+        self.hostid = hostid
+        self.config = {}
 
-cmd_vncstart() {
-    local hal=$(hal_hostname "$1")
-    ssh service-control@$hal sudo systemctl start kvmd-otg.service kvmd.service kvmd-vnc.service
-    echo "Listening on 172.16.$1.2:5900"
-}
+        self.load_config()
+        self.hal_hostname = f"hal90{self.hostid:02d}.testnet"
 
-cmd_vncstop() {
-    local hal=$(hal_hostname "$1")
-    ssh service-control@$hal sudo systemctl stop kvmd-otg.service kvmd.service kvmd-vnc.service
-}
+        self.log = logging.getLogger(f"testbed.{self.hostid}")
 
-cmd_help() {
-    echo "Selected target: $1"
-    echo "Current boot mode: $(get_current_mode "$1")"
-    echo "Currently in use by: $(get_current_claim "$1")"
-    echo ""
-    echo "Available commands:"
-    echo " - reset - hard reset the target"
-    echo " - poweron - power on the target"
-    echo " - poweroff - (hard) power off the target"
-    echo " - rescue - switch next boot to rescue system (doesn't load anything from the disk)"
-    echo " - fallback - switch next boot to fallback system (loads /boot/efi/EFI/qubes/grub-fallback.cfg)"
-    echo " - normal - switch next boot to normal system (entry with 'Qubes' in name in case of UEFI)"
-    echo " - custom - switch next boot to custom grub config (/srv/tftp/test$1/grub.cfg)"
-    echo " - openqa - switch next boot to openqa grub config (/srv/tftp/test$1/grub-openqa.cfg)"
-    echo " - gitlab-ci - switch next boot to gitlab-ci grub config (/srv/tftp/test$1/grub-gitlab-ci.cfg)"
-    echo " - hostkey - print SSH hostkey used by the rescue system"
-    echo " - wake - wake up the system (either wake-on-lan, or button press)"
-    echo " - console - get serial console (if available)"
-    echo " - vnc:start - start VNC proxy for HDMI with USB keyboard/mouse input; do not use when openqa is running"
-    echo " - vnc:stop - stop VNC proxy"
-    echo " - claim:name - claim the machine for given service (gitlab, openqa, manual)"
-    echo " - release:name - release claimed machine - name must match the current claim"
-    exit 0
-}
+    def load_config(self):
+        configpath = os.path.join(configdir, "hosts", f"{self.hostid}.conf")
+        with open(configpath, "rb") as f:
+            self.config = tomllib.load(f)
 
-cmd_hostkey() {
-    local rescuedir=/srv/tftp/rescue
-    ls -l "$rescuedir/initrd.img"
-    if ! [ -e "$rescuedir/initrd/.extracted" ] || [ "$rescuedir/initrd.img" -nt "$rescuedir/initrd/.extracted" ]; then
-        rm -rf "$rescuedir/initrd"
-        mkdir -p "$rescuedir/initrd"
-        unmkinitramfs "$rescuedir/initrd.img" "$rescuedir/initrd"
-        touch "$rescuedir/initrd/.extracted"
-    fi
-    for f in "$rescuedir/initrd/main/etc/dropbear/"dropbear_*_host_key; do
-        dropbearkey -y -f "$f"
-    done
-}
+    def get_current_mode(self):
+        bootfile = os.path.join(bootconfdir, f"testbed{self.hostid}-default")
+        if not os.path.exists(bootfile):
+            print(f"Boot mode for {self.hostid} not set!", file=sys.stderr)
+            return None
+        return os.path.basename(os.readlink(bootfile)).removeprefix("env-boot-")
 
-if [ -z "$commands" ]; then
-    cmd_help "$target"
-fi
+    def _send_bootfiles(self, mode):
+        print(f"Sending boot files for target {self.hostid}")
+        if mode == "normal":
+            subprocess.run(["ssh", f"customboot@{self.hal_hostname}", "customboot-build"],
+                stdin=subprocess.DEVNULL)
+        elif mode == "custom":
+            with subprocess.Popen(["tar", "c", "-C", f"/srv/tftp/test{self.hostid}", "."],
+                    stdout=subprocess.PIPE) as p:
+                subprocess.run(["ssh", f"customboot@{self.hal_hostname}", "customboot-build"],
+                    stdin=p.stdout)
 
-for cmd in $commands; do
-    case "$cmd" in
-        help) cmd_help "$target";;
-        reset) cmd_reset "$target";;
-        poweron) cmd_poweron "$target";;
-        poweroff) cmd_poweroff "$target";;
-        rescue) cmd_switchboot "$target" rescue;;
-        fallback) cmd_switchboot "$target" fallback;;
-        normal) cmd_switchboot "$target" normal;;
-        custom) cmd_switchboot "$target" custom;;
-        openqa) cmd_switchboot "$target" openqa;;
-        gitlabci) cmd_switchboot "$target" gitlabci;;
-        hostkey) cmd_hostkey;;
-        wake) cmd_wake "$target";;
-        console) cmd_console "$target";;
-        claim:*) cmd_claim "$target" "${cmd#claim:}";;
-        release:*) cmd_release "$target" "${cmd#release:}";;
-        vnc:start) cmd_vncstart "$target";;
-        vnc:stop) cmd_vncstop "$target";;
-        *) echo "Invalid command '$cmd'" >&2; exit 1;;
-    esac
-done
+    def _update_stripes(self, mode):
+        subprocess.run(["stripes", str(self.hostid), mode])
+
+    @Lock("power")
+    def switchboot(self, mode):
+        print(f"Setting boot mode for {self.hostid} to {mode}... ", end="")
+
+        if not os.path.exists(f"{bootconfdir}/env-boot-{mode}"):
+            print(f"Invalid boot option {mode}")
+            return 1
+
+        try:
+            os.remove(f"{bootconfdir}/testbed{self.hostid}-default")
+        except FileNotFoundError:
+            pass
+        os.symlink(f"env-boot-{mode}",
+            f"{bootconfdir}/testbed{self.hostid}-default")
+        print("done")
+
+        if self.config.get("send-bootfiles", False):
+            self._send_bootfiles(mode)
+
+        self._update_stripes(mode)
+
+    def _do_power_action(self, method, action):
+        method, *args = method.split(":")
+        if method == "sispm":
+            if action not in ("poweron", "poweroff"):
+                return
+            devid = ":".join(args[0:5])
+            socket = args[5]
+            action_opt = "-o" if action == "poweron" else "-f"
+            subprocess.check_call(["sispmctl", "-D", devid, action_opt, socket])
+        elif method == "shelly":
+            if action not in ("poweron", "poweroff"):
+                return
+            ip, port = args[0:2]
+            r = requests.post(f"http://{ip}:{port}/rpc", json={
+                "id": 0,
+                "method": "Switch.Set",
+                "params": {
+                    "id":0,
+                    "on": action != "poweroff"
+                }
+            })
+            r.raise_for_status()
+        elif method == "wol":
+            if action == "poweroff":
+                return
+            time.sleep(3)
+            iface, *mac = args
+            mac = ":".join(mac)
+            subprocess.check_call(["etherwake", "-i", iface, mac])
+        elif method == "hal-wol":
+            if action == "poweroff":
+                return
+            time.sleep(3)
+            iface, *mac = args
+            mac = ":".join(mac)
+            subprocess.check_call([
+                "ssh", f"service-control@{self.hal_hostname}",
+                "sudo", "ether-wake", "-i", iface, mac])
+        elif method in ("hal-button", "hal-wake-button"):
+            if action == "poweroff" or (method == "hal-wake-button" and action != "wake"):
+                return
+            time.sleep(3)
+            subprocess.check_call([
+                "ssh", f"control@{self.hal_hostname}", "power"])
+        elif method == "boot-menu":
+            if action != "poweron" or self.get_current_mode() != "custom":
+                return
+            subprocess.check_call([
+                "ssh", f"console@{self.hal_hostname}", "boot-menu-interact", "USB"],
+                stdout=subprocess.DEVNULL)
+        else:
+            raise NotImplementedError(f"Unknown power method {method}")
+
+    def _has_gitlab(self):
+        return self.config.get("gitlab", False)
+
+    def get_current_claim(self):
+        claimfile = os.path.join(bootconfdir, f"testbed{self.hostid}-claim")
+        if os.path.exists(claimfile):
+            with open(claimfile, 'r') as f:
+                return f.readline().strip()
+        return None
+
+    def claim(self, claim):
+        claimfile = os.path.join(bootconfdir, f"testbed{self.hostid}-claim")
+        if claim not in ["gitlab", "openqa", "manual"]:
+            raise ValueError(f"Unsupported claim: {claim}")
+
+        current_claim = self.get_current_claim()
+        if current_claim == claim:
+            return
+
+        if current_claim:
+            raise PermissionError(f"Testbed {self.hostid} already claimed by {current_claim}")
+
+        if claim != "gitlab" and self._has_gitlab():
+            subprocess.run(["ssh", f"service-control@{self.hal_hostname}",
+                            "sudo systemctl stop gitlab-runner.service"])
+        if claim != "openqa":
+            subprocess.run(["ssh", f"service-control@{self.hal_hostname}",
+                            "sudo systemctl stop openqa-worker.target"])
+
+        with open(claimfile, 'w') as f:
+            f.write(claim)
+
+    def release(self, claim):
+        claimfile = os.path.join(bootconfdir, f"testbed{self.hostid}-claim")
+        current_claim = self.get_current_claim()
+
+        if current_claim != claim:
+            raise PermissionError(f"Currently in use by {current_claim}, not {claim}")
+
+        if claim != "gitlab" and self._has_gitlab():
+            subprocess.run(["ssh", f"service-control@{self.hal_hostname}",
+                            "sudo systemctl start gitlab-runner.service"])
+        if claim != "openqa":
+            subprocess.run(["ssh", f"service-control@{self.hal_hostname}",
+                            "sudo systemctl start openqa-worker.target"])
+
+        os.remove(claimfile)
+
+    @Lock("power")
+    def poweroff(self):
+        print(f"Powering off {self.hostid}... ")
+
+        for method in reversed(self.config.get("power", "").split()):
+            self._do_power_action(method, "poweroff")
+        self._update_stripes("off")
+
+    @Lock("power")
+    def poweron(self):
+        self.log.info(f"Powering on {self.hostid}... ")
+
+        for method in self.config.get("power", "").split():
+            self._do_power_action(method, "poweron")
+        self._update_stripes("on")
+
+    def reset(self):
+        self.poweroff()
+        time.sleep(3)
+        self.poweron()
+
+    @Lock("power")
+    def wake(self):
+        print(f"Waking up {self.hostid}... ")
+
+        for method in self.config.get("power", "").split():
+            self._do_power_action(method, "wake")
+
+    def console(self):
+        with Lock(f"console-{self.hostid}"):
+            console_type = self.config.get("console")
+            if console_type == "hal-picocom-AMA1":
+                subprocess.run(["ssh", "-t", f"console@{self.hal_hostname}",
+                                "picocom", "--send-cmd=false", "--receive-cmd=false", "-b", "115200", "/dev/ttyAMA1"])
+            elif console_type == "hal-connect-USB0":
+                subprocess.run(["ssh", "-t", f"console@{self.hal_hostname}",
+                                "connect-serial-console", "/dev/ttyUSB0"])
+            elif console_type == "local":
+                console_device = f"/dev/console-test{self.hostid}"
+                if not os.path.exists(console_device):
+                    raise NotImplementedError(f"Console for test{self.hostid} is not connected")
+                subprocess.run(["picocom", "--send-cmd=false", "--receive-cmd=false","-b", "115200", console_device])
+            else:
+                raise NotImplementedError("Console not supported for this host")
+
+    def vncstart(self):
+        kvm_services = self.config.get("kvm-services",
+            "kvmd-otg.service kvmd.service kvmd-vnc.service").split()
+        if not kvm_services:
+            raise NotImplementedError("KVM / VNC not supported for this host")
+        subprocess.run(["ssh", f"service-control@{self.hal_hostname}",
+                        "sudo", "systemctl", "start", *kvm_services])
+        print(f"Listening on 172.16.{self.hostid}.2:5900")
+
+    def vncstop(self):
+        kvm_services = self.config.get("kvm-services",
+            "kvmd-otg.service kvmd.service kvmd-vnc.service").split()
+        if not kvm_services:
+            raise NotImplementedError("KVM / VNC not supported for this host")
+        subprocess.run(["ssh", f"service-control@{self.hal_hostname}",
+                        "sudo", "systemctl", "stop", *kvm_services])
+
+    def hostkey(self):
+        # TODO: change print to logging?
+        img_path = os.path.join(rescuedir, "initrd.img")
+        extracted_path = os.path.join(rescuedir, "initrd", ".extracted")
+
+        print(f"Listing {img_path}:")
+        subprocess.run(["ls", "-l", img_path])
+
+        if not os.path.exists(extracted_path) or os.path.getmtime(img_path) > os.path.getmtime(extracted_path):
+            subprocess.run(["rm", "-rf", os.path.join(rescuedir, "initrd")])
+            os.makedirs(os.path.join(rescuedir, "initrd"), exist_ok=True)
+            subprocess.run(["unmkinitramfs", img_path, os.path.join(rescuedir, "initrd")])
+            with open(extracted_path, 'w') as f:
+                f.write('')
+
+        for key_file in os.listdir(os.path.join(rescuedir, "initrd", "main", "etc", "dropbear")):
+            if key_file.startswith("dropbear_") and key_file.endswith("_host_key"):
+                subprocess.run(["dropbearkey", "-y", "-f", os.path.join(rescuedir, "initrd", "main", "etc", "dropbear", key_file)])
+
+
+
+def cmd_help(testbed):
+    print(f"Selected target: {testbed.hostid}")
+    print(f"Current boot mode: {testbed.get_current_mode()}")
+    print(f"Currently in use by: {testbed.get_current_claim()}")
+    print("")
+    print("Available commands:")
+    print(" - reset - hard reset the target")
+    print(" - poweron - power on the target")
+    print(" - poweroff - (hard) power off the target")
+    print(" - rescue - switch next boot to rescue system (doesn't load anything from the disk)")
+    print(" - fallback - switch next boot to fallback system (loads /boot/efi/EFI/qubes/grub-fallback.cfg)")
+    print(" - normal - switch next boot to normal system (entry with 'Qubes' in name in case of UEFI)")
+    print(" - custom - switch next boot to custom grub config (/srv/tftp/test{target}/grub.cfg)")
+    print(" - openqa - switch next boot to openqa grub config (/srv/tftp/test{target}/grub-openqa.cfg)")
+    print(" - gitlab-ci - switch next boot to gitlab-ci grub config (/srv/tftp/test{target}/grub-gitlab-ci.cfg)")
+    print(" - hostkey - print SSH hostkey used by the rescue system")
+    print(" - wake - wake up the system (either wake-on-lan, or button press)")
+    print(" - console - get serial console (if available)")
+    print(" - vnc:start - start VNC proxy for HDMI with USB keyboard/mouse input; do not use when openqa is running")
+    print(" - vnc:stop - stop VNC proxy")
+    print(" - claim:name - claim the machine for given service (gitlab, openqa, manual)")
+    print(" - release:name - release claimed machine - name must match the current claim")
+    sys.exit(0)
+
+def setup_logging():
+    ha_syslog = logging.handlers.SysLogHandler('/dev/log')
+    ha_syslog.setFormatter(
+        logging.Formatter('%(name)s[%(process)d]: %(message)s'))
+    logging.root.addHandler(ha_syslog)
+    logging.root.setLevel("INFO")
+
+def main():
+    setup_logging()
+    if len(sys.argv) < 2:
+        print("Usage: testbed-control hostid commands...", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        target = int(sys.argv[1])
+    except ValueError:
+        print(f"Invalid target {sys.argv[1]}, must be a number!", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        testbed = Testbed(target)
+    except FileNotFoundError:
+        print(f"No such host: {target}!", file=sys.stderr)
+        sys.exit(1)
+
+    if len(sys.argv) > 2 and sys.argv[2] == "ssh":
+        commands = os.environ.get("SSH_ORIGINAL_COMMAND", "").split()
+    else:
+        commands = sys.argv[2:]
+
+    if not commands:
+        cmd_help(testbed)
+
+    for cmd in commands:
+        testbed.log.info("command: %s", cmd)
+        if cmd == "help":
+            cmd_help(testbed)
+        elif cmd == "reset":
+            testbed.reset()
+        elif cmd == "poweron":
+            testbed.poweron()
+        elif cmd == "poweroff":
+            testbed.poweroff()
+        elif cmd == "rescue":
+            testbed.switchboot("rescue")
+        elif cmd == "fallback":
+            testbed.switchboot("fallback")
+        elif cmd == "normal":
+            testbed.switchboot("normal")
+        elif cmd == "custom":
+            testbed.switchboot("custom")
+        elif cmd == "openqa":
+            testbed.switchboot("openqa")
+        elif cmd == "gitlabci":
+            testbed.switchboot("gitlabci")
+        elif cmd == "hostkey":
+            testbed.hostkey()
+        elif cmd == "wake":
+            testbed.wake()
+        elif cmd == "console":
+            testbed.console()
+        elif cmd.startswith("claim:"):
+            testbed.claim(cmd.split(":")[1])
+        elif cmd.startswith("release:"):
+            testbed.release(cmd.split(":")[1])
+        elif cmd == "vnc:start":
+            testbed.vncstart()
+        elif cmd == "vnc:stop":
+            testbed.vncstop()
+        else:
+            print(f"Invalid command '{cmd}'")
+            sys.exit(1)
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as e:
+        print(f"ERROR: {e!s}")
+        sys.exit(1)
