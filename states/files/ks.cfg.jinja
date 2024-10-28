@@ -18,9 +18,12 @@ ps aux > /tmp/pre.ps
 if grep -q 4.0 /etc/qubes-release; then
     internal=eDP1
     hdmi=HDMI1
+elif grep -q 4.2 /etc/qubes-release; then
+    internal={{salt['pillar.get']('xrandr-installer-4.2:internal-output', 'eDP-1')}}
+    hdmi={{salt['pillar.get']('xrandr-installer-4.2:hdmi-output', 'HDMI-1')}}
 else
-    internal={{salt['pillar.get']('xrandr:internal-output', 'eDP-1')}}
-    hdmi=HDMI-1
+    internal={{salt['pillar.get']('xrandr-installer:internal-output', 'eDP-1')}}
+    hdmi={{salt['pillar.get']('xrandr-installer:hdmi-output', 'HDMI-1')}}
 fi
 # gnome-kiosk configures outputs on its own, the below xorg.conf snippet will
 # properly choose the resolution, but position needs to be reset via xrandr anyway...
@@ -109,9 +112,12 @@ efibootmgr -n "$qubes"
 if grep -q 4.0 /etc/qubes-release; then
     internal=eDP1
     hdmi=HDMI1
+elif grep -q 4.2 /etc/qubes-release; then
+    internal={{salt['pillar.get']('xrandr-4.2:internal-output', 'eDP-1')}}
+    hdmi={{salt['pillar.get']('xrandr-4.2:hdmi-output', 'HDMI-1')}}
 else
     internal={{salt['pillar.get']('xrandr:internal-output', 'eDP-1')}}
-    hdmi=HDMI-1
+    hdmi={{salt['pillar.get']('xrandr:hdmi-output', 'HDMI-1')}}
 fi
 cat <<EOF >/etc/X11/xorg.conf.d/30-monitor-layout.conf
 Section "Monitor"
@@ -135,8 +141,10 @@ EndSection
 EOF
 
 if grep -q weston /usr/libexec/initial-setup/run-gui-backend; then
-sed -i -e '/xwayland/a [output]\nname='$internal'\nmode=off\n' \
-	/usr/libexec/initial-setup/run-gui-backend
+    internal={{salt['pillar.get']('weston:internal-output', 'eDP-1')}}
+    hdmi={{salt['pillar.get']('weston:hdmi-output', 'HDMI-1')}}
+    sed -i -e '/xwayland/a [output]\nname='$internal'\nmode=off\n' \
+        /usr/libexec/initial-setup/run-gui-backend
 fi
 
 %end
