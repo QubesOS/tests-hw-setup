@@ -7,7 +7,7 @@ import time
 
 def interact(client_send):
     # press F2 few times, unfortunately we don't have any feedback at this point
-    for _ in range(10):
+    for _ in range(12):
         client_send(b"f2\n")
         time.sleep(1)
 
