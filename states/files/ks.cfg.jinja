@@ -66,9 +66,9 @@ echo nameserver 192.168.190.3 > /etc/resolv.conf
 
 {% if is_tcp_serial %}
 %pre
-rm -f /dev/hvc0
-mknod /dev/hvc0 p
-nc -e '/bin/cat /dev/hvc0' -k -l 1100 </dev/null >/dev/null 2>&1 &
+rm -f /dev/ttyS0
+mknod /dev/ttyS0 p
+nc -e '/bin/cat /dev/ttyS0' -k -l 1100 </dev/null >/dev/null 2>&1 &
 
 %end
 {% endif -%}
