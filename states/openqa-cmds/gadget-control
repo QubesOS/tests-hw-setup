@@ -636,7 +636,7 @@ async def handle_client(gadget, reader, writer):
             writer.write(b"ok\n")
             await writer.drain()
         except BrokenPipeError:
-            writer.write("error: failed to send '{}' - USB disconnected".format(line.strip()).encode())
+            writer.write("error: failed to send '{}' - USB disconnected\n".format(line.strip()).encode())
             await writer.drain()
     writer.close()
 
