@@ -42,3 +42,9 @@ buttons:
 system_state:
   # example, PiKVMv3
   power: "led 24 1"
+
+hostapd:
+  ap_name: xxxx
+  wpa_passphrase: xxxx
+  # currently unused, as default Qubes' configuration use random MAC anyway
+  client_mac: 'XX:XX:XX:XX:XX:XX'
