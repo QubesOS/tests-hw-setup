@@ -1,0 +1,8 @@
+#!ipxe
+
+## qubes install (with ISO mounted on the server)
+set net_default_server 172.16.{{hostid}}.2
+kernel http://${net_default_server}/qinstall/iso/images/pxeboot/xen.gz placeholder smt=off {{cmdline_xen}} || goto failed
+module http://${net_default_server}/qinstall/iso/images/pxeboot/vmlinuz{{kernel_suffix}} inst.repo=http://172.16.{{hostid}}.2/qinstall/iso plymouth.ignore-serial-consoles inst.sshd inst.ks=http://172.16.{{hostid}}.2/qinstall/ks.cfg {{cmdline_linux}} || goto failed
+module http://${net_default_server}/qinstall/iso/images/pxeboot/initrd{{kernel_suffix}}.img || goto failed
+boot

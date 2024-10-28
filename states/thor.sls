@@ -169,6 +169,9 @@ control:
   file.recurse:
   - source: salt://thor/grub2-efi
 
+/srv/tftp/ipxe:
+  file.recurse:
+  - source: salt://thor/ipxe
 
 {% for host in hosts %}
 {% set hostid = host | replace('hw', '') %}
@@ -179,10 +182,21 @@ control:
       testbedid={{hostid}}
       {{hosts[host].get("grub-settings", "")|indent(6)}}
 
+/srv/tftp/ipxe/testbed{{hostid}}-settings.ipxe:
+  file.managed:
+  - contents: |
+      #!ipxe
+      set testbedid {{hostid}}
+      {{hosts[host].get("ipxe-settings", "")|indent(6)}}
+
 {% if hosts[host].get("mac", "") -%}
 "/srv/tftp/grub2-efi/env-{{hosts[host]["mac"]}}-settings":
   file.symlink:
   - target: testbed{{hostid}}-settings
+
+"/srv/tftp/ipxe/{{hosts[host]["mac"]}}-settings.ipxe":
+  file.symlink:
+  - target: testbed{{hostid}}-settings.ipxe
 {% endif %}
 
 test{{hostid}}:
@@ -216,6 +230,16 @@ test{{hostid}}:
 /srv/tftp/test{{hostid}}/grub-openqa.cfg:
   file.managed:
   - source: salt://thor/grub-openqa.cfg.jinja
+  - template: jinja
+  - context:
+      hostid: {{hostid}}
+      cmdline_xen: "{{hosts[host].get("cmdline-xen", "")}}"
+      cmdline_linux: "{{hosts[host].get("cmdline-linux", "")}}"
+      kernel_suffix: "{{hosts[host].get("kernel-suffix", "")}}"
+
+/srv/tftp/test{{hostid}}/boot-openqa.ipxe:
+  file.managed:
+  - source: salt://thor/boot-openqa.ipxe.jinja
   - template: jinja
   - context:
       hostid: {{hostid}}

@@ -1,0 +1,56 @@
+#!ipxe
+
+chain --autofree http://192.168.190.2/ipxe/${net0/mac}-settings.ipxe || goto start
+chain --autofree http://192.168.190.2/ipxe/testbed${testbedid}-default.ipxe || goto start
+
+goto ${default} || goto start
+
+:start
+menu Select item to boot
+item local Local legacy boot
+item qinstall qinstall
+item testboot testboot
+item grub2-efi grub2efi
+item rescue rescue
+item shell shell
+
+choose target && goto ${target}
+
+:failed
+echo Failed, dropping to shell
+
+:shell
+echo Type 'exit' to return to menu
+shell
+goto start
+
+:local
+sanboot --no-describe --drive 0x80
+
+:rescue
+kernel ../rescue-qubes/images/pxeboot/xen.gz placeholder smt=off console=com1 ${extra_xen_opts} || goto failed
+module ../rescue-qubes/images/pxeboot/vmlinuz-latest inst.stage2=http://192.168.190.2/rescue-qubes plymouth.ignore-serial-consoles inst.sshd inst.rescue inst.ks=http://192.168.190.2/rescue-qubes/ks.cfg iomem=relaxed || goto failed
+module ../rescue-qubes/images/pxeboot/initrd-latest.img || goto failed
+boot || goto failed
+
+:test-openqa
+chain --autofree /test${testbedid}/boot-openqa.ipxe || goto failed
+
+:test-gitlab-ci
+chain --autofree http://172.16.${testbedid}.2/gitlab-ci/boot.ipxe || goto failed
+
+:test-custom
+chain --autofree /test${testbedid}/boot.ipxe || goto failed
+
+:grub2efi
+sleep 1
+kernel /grub2-efi/grub2.efi
+boot || goto failed
+
+:qinstall
+kernel http://qb/grub2-efi/xen.gz console=none || goto failed
+module http://qb/qinstall/iso/isolinux/vmlinuz repo=http://192.168.191.16/qinstall/iso plymouth.ignore-serial-consoles i915.alpha_support=1 quiet rhgb || goto failed
+#module http://qb/qinstall/iso/isolinux/vmlinuz repo=http://192.168.191.16/qinstall/iso ks=http://192.168.191.16/qinstall/ks.cfg || goto failed
+#module http://qb/qinstall/iso/isolinux/vmlinuz repo=http://192.168.191.16/qinstall/iso inst.ks=hd:LABEL=NITROKEY_OEM:ks.cfg || goto failed
+module http://qb/qinstall/iso/isolinux/initrd.img || goto failed
+boot || goto failed

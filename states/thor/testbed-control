@@ -14,6 +14,7 @@ import requests
 
 configdir = "/etc/testbed"
 bootconfdir = "/srv/tftp/grub2-efi"
+ipxeconfdir = "/srv/tftp/ipxe"
 lockdir = "/run/testbed-control"
 rescuedir = "/srv/tftp/rescue"
 
@@ -151,6 +152,12 @@ class Testbed:
             pass
         os.symlink(f"env-boot-{mode}",
             f"{bootconfdir}/testbed{self.hostid}-default")
+        try:
+            os.remove(f"{ipxeconfdir}/testbed{self.hostid}-default.ipxe")
+        except FileNotFoundError:
+            pass
+        os.symlink(f"env-boot-{mode}",
+            f"{ipxeconfdir}/testbed{self.hostid}-default.ipxe")
         print("done")
 
         if self.config.get("send-bootfiles", False):
