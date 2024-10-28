@@ -23,9 +23,9 @@ systemd-sysusers /usr/lib/sysusers.d/kvmd.conf:
     - onchanges:
       - file: /usr/lib/sysusers.d/kvmd.conf
 
-kvmd-deps:
+# packages not needing resolve_capabilities=True install separately to speed things up
+kvmd-static-deps:
   pkg.installed:
-    - resolve_capabilities: True
     - pkgs:
       - libjpeg8-devel
       - libevent-devel
@@ -33,6 +33,27 @@ kvmd-deps:
       - make
       - patch
       - gcc
+      - automake
+      - autoconf
+      - libtool
+      - libnice-devel
+      - libconfig-devel
+      - libsrtp-devel
+      - libwebsockets-devel
+      - gengetopt
+      - alsa-devel
+      - glib2-devel
+      - speex-devel
+      - libopus-devel
+      - libjansson-devel
+
+kvmd-deps:
+  pkg.installed:
+    - resolve_capabilities: True
+    - require:
+      - pkg: kvmd-static-deps
+    - pkgs:
+      - openssl-devel
       - python3-pygments
       - python3-setuptools
       - python3-aiofiles
@@ -52,20 +73,7 @@ kvmd-deps:
       - python3-pipx
       - python3-netifaces
       - python3-async-lru
-      - automake
-      - autoconf
-      - libtool
-      - openssl-devel
-      - libnice-devel
-      - libconfig-devel
-      - libsrtp-devel
-      - libwebsockets-devel
-      - gengetopt
-      - alsa-devel
-      - glib2-devel
-      - speex-devel
-      - libopus-devel
-      - libjansson-devel
+
 
 /var/lib/pikvm-sources:
   file.directory:
