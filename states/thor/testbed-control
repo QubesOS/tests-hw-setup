@@ -262,7 +262,7 @@ class Testbed:
                             "sudo systemctl start gitlab-runner.service"])
         if claim != "openqa":
             subprocess.run(["ssh", f"service-control@{self.hal_hostname}",
-                            "sudo systemctl start openqa-worker.target"])
+                            "sudo systemctl start openqa-worker.target openqa-worker-cacheservice-minion.service"])
 
         os.remove(claimfile)
 
