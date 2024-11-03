@@ -84,6 +84,7 @@ workers-global:
         GENERAL_HW_CMD_DIR = /usr/local/openqa-cmds
         GENERAL_HW_POWERON_CMD = openqa-poweron
         GENERAL_HW_POWEROFF_CMD = openqa-poweroff
+        GENERAL_HW_EJECT_CMD = openqa-eject
         GENERAL_HW_FLASH_CMD = openqa-flash
         GENERAL_HW_FLASH_ARGS = --hostid={{ hostid }}
         GENERAL_HW_IMAGE_CMD = openqa-store-asset
