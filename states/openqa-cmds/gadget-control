@@ -45,8 +45,8 @@ class BaseGadget:
         self.set_sysfs_attr("bDeviceProtocol", "0x00")  # specified in interface
         self.set_sysfs_attr("idVendor", "0x1d6b")  # Linux Foundation
         self.set_sysfs_attr("idProduct", "0x0104")  # Multifunction composite gadget
-        self.set_sysfs_attr("strings/0x409/manufacturer", "marmarek")
-        self.set_sysfs_attr("strings/0x409/product", "RPi4 USB Gadget")
+        self.set_sysfs_attr("strings/0x409/manufacturer", "Qubes OS")
+        self.set_sysfs_attr("strings/0x409/product", "Test USB Gadget")
         self.set_sysfs_attr("strings/0x409/serialnumber", "0123456789abcdef")
         self.set_sysfs_attr("configs/c.1/bmAttributes", "0x80")  # Bus powered
         self.set_sysfs_attr("configs/c.1/MaxPower", "250")
