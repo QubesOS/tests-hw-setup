@@ -30,6 +30,26 @@ target_settings() {
     get_ini_values /etc/openqa/hw-control.conf console 'serial_speed'
 }
 
+# print snippet that sets *part vars based on $disk, the actual partition
+# layout, and fallback to predefined settings in case of not found
+detect_disks_snippet() {
+    cat <<EOF
+# defaults
+efipart=$efipart
+bootpart=$bootpart
+lvmpart=$lvmpart
+
+# detect
+detected_efi=\$(lsblk -lnp -o NAME,PARTTYPE "$disk" |grep "$disk"|grep c12a7328-f81f-11d2-ba4b-00a0c93ec93b) && efipart="\${detected_efi%% *}"
+
+detected_crypt=\$(lsblk -lnp -o NAME,FSTYPE "$disk" |grep "$disk"|grep crypto_LUKS) && lvmpart="\${detected_crypt%% *}"
+if [ -n "\$detected_crypt" ]; then
+    # look for /boot as the only ext4 partition; works only if rootfs is encrypted
+    detected_boot=\$(lsblk -lnp -o NAME,FSTYPE "$disk" |grep "$disk"|grep ext4) && bootpart="\${detected_boot%% *}"
+fi
+EOF
+}
+
 thor() {
     ssh -o UserKnownHostsFile=/usr/local/openqa-cmds/thor-known-hosts control@thor "$@"
 }

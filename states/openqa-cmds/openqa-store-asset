@@ -69,8 +69,10 @@ ssh_target sh -c 'cat > /tmp/snapshot.sh && sh /tmp/snapshot.sh' <<EOF
 set -e
 set -x
 
-if [ "\$(blkid -p "$lvmpart" -o value -s TYPE)" = "crypto_LUKS" ]; then
-    cryptsetup open "$lvmpart" luks <<<"lukspass"
+`detect_disks_snippet`
+
+if [ "\$(blkid -p "\$lvmpart" -o value -s TYPE)" = "crypto_LUKS" ]; then
+    cryptsetup open "\$lvmpart" luks <<<"lukspass"
 fi
 
 rootvol=
@@ -91,15 +93,15 @@ mkdir -p /mnt/sysroot /mnt/part
 lvchange --ignoremonitoring -K -ay /dev/\$rootvol
 mount /dev/\$rootvol /mnt/sysroot
 
-if [ -e "$efipart" ] && [ "\$(blkid "$efipart" -o value -s TYPE)" = "vfat" ]; then
-    mount "$efipart" /mnt/part -o ro
+if [ -e "\$efipart" ] && [ "\$(blkid "\$efipart" -o value -s TYPE)" = "vfat" ]; then
+    mount "\$efipart" /mnt/part -o ro
     rm -rf /mnt/sysroot/snap-efi
     cp -a /mnt/part /mnt/sysroot/snap-efi
     umount /mnt/part
 fi
 
-if [ -e "$bootpart" ] && [ "\$(blkid "$bootpart" -o value -s TYPE)" = "ext4" ]; then
-    mount "$bootpart" /mnt/part -o ro
+if [ -e "\$bootpart" ] && [ "\$(blkid "\$bootpart" -o value -s TYPE)" = "ext4" ]; then
+    mount "\$bootpart" /mnt/part -o ro
     rm -rf /mnt/sysroot/snap-boot
     cp -a /mnt/part /mnt/sysroot/snap-boot
     umount /mnt/part
