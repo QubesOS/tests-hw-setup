@@ -73,6 +73,7 @@ kvmd-deps:
       - python3-pipx
       - python3-netifaces
       - python3-async-lru
+      - python3-build
 
 
 /var/lib/pikvm-sources:
@@ -186,7 +187,7 @@ https://github.com/pikvm/ustreamer:
   git.latest:
     - target: /var/lib/pikvm-sources/ustreamer
     - branch: master
-    - rev: f8ed7d7b3bf12d81b73d9c934e8b3d6b66cea24f
+    - rev: c848756d53626d2ba462a698777c6f4e32bf100c
     - user: kvmd
     - require:
       - file: /var/lib/pikvm-sources
@@ -226,7 +227,7 @@ https://github.com/pikvm/kvmd:
   git.latest:
     - target: /var/lib/pikvm-sources/kvmd
     - branch: master
-    - rev: d14757e107215219165e2894c197e6ad563a7d61
+    - rev: 85a2f2367d3c7e29f6e1857e110d47dfd5297814
     - force_reset: true
     - user: kvmd
     - require:
@@ -289,6 +290,13 @@ kvmd-install:
 {{ copy_kvmd_file("configs/os/services/kvmd-otg.service", "/etc/systemd/system/kvmd-otg.service") }}
 {{ copy_kvmd_file("configs/os/services/kvmd-janus-static.service", "/etc/systemd/system/kvmd-janus-static.service") }}
 
+
+/usr/share/kvmd/platform:
+  file.managed:
+  - contents: |
+      PIKVM_MODEL=v3
+      PIKVM_VIDEO=hdmi
+      PIKVM_BOARD=rpi4
 
 /etc/systemd/system/kvmd-janus-static.service.d/paths.conf:
   file.managed:
