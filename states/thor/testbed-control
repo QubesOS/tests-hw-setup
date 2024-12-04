@@ -203,8 +203,11 @@ class Testbed:
             subprocess.check_call([
                 "ssh", f"service-control@{self.hal_hostname}",
                 "sudo", "ether-wake", "-i", iface, mac])
-        elif method in ("hal-button", "hal-wake-button"):
-            if action == "poweroff" or (method == "hal-wake-button" and action != "wake"):
+        elif method in ("hal-button", "hal-wake-button", "hal-poweron-button"):
+            if (action == "poweroff" or
+                (method == "hal-wake-button" and action != "wake") or
+                (method == "hal-poweron-button" and action != "poweron")
+            ):
                 return
             time.sleep(3)
             subprocess.check_call([
