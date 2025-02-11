@@ -10,7 +10,7 @@
   file.managed:
     #- source: https://packages.gitlab.com/runner/gitlab-runner/gpgkey
     - source: https://packages.gitlab.com/gpg.key
-    - source_hash: 34170579d600a258ab1fbe7efa8078a36ba80793a99a1c1ad55d3be6f2c41c00
+    - source_hash: d283e2839ad711988ea57307d88cced142dfc67f27cc50ec3158a3978ad66bb5
 
 gitlab-repo:
   file.managed:

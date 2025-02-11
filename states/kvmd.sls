@@ -140,6 +140,7 @@ janus-make-install:
     - source: /var/lib/pikvm-sources/janus-gateway-bin/usr/local/bin/janus
     - makedirs: True
     - dir_mode: 755
+    - force: true
 
 # file.copy can't recurse...
 "rm -rf /usr/local/lib/janus/transports && mkdir -p /usr/local/lib/janus && cp -rd /var/lib/pikvm-sources/janus-gateway-bin/usr/local/lib/janus/transports /usr/local/lib/janus/transports":
@@ -158,6 +159,7 @@ janus-make-install:
   - source: /var/lib/pikvm-sources/janus-gateway-bin/usr/local/share/janus/javascript/janus.js
   - makedirs: True
   - dir_mode: 755
+  - force: true
 
 /usr/local/share/janus/javascript/adapter.js:
   file.managed:
@@ -194,7 +196,7 @@ https://github.com/pikvm/ustreamer:
 
 ustreamer-make:
   cmd.run:
-    - name: make WITH_PYTHON=1 WITH_JANUS=1
+    - name: "rm -rf src/build python/build python/ustreamer.egg-info && make WITH_PYTHON=1 WITH_JANUS=1"
     - cwd: /var/lib/pikvm-sources/ustreamer
     - env:
       - CFLAGS: "-I/usr/local/include/janus"
@@ -275,6 +277,7 @@ kvmd-install:
     - source: /var/lib/pikvm-sources/kvmd/{{src}}
     - makedirs: True
     - dir_mode: 755
+    - force: True
 {% endmacro -%}
 
 {{ copy_kvmd_file("configs/kvmd/main/v2-hdmi-rpi4.yaml", "/etc/kvmd/main.yaml") }}
@@ -338,6 +341,7 @@ kvmd-install:
 /etc/nginx/conf.d/janus.ctx-http.conf:
   file.copy:
   - source: /var/lib/pikvm-sources/kvmd/extras/janus/nginx.ctx-http.conf
+  - force: true
 
 /etc/nginx/vhosts.d/kvmd.conf:
   file.managed:
@@ -421,6 +425,7 @@ kvmd-install:
   - source: /var/lib/pikvm-sources/kvmd/extras/janus-static/manifest.yaml
   - makedirs: True
   - mode: 0755
+  - force: true
 
 /usr/share/kvmd/web:
   file.symlink:
@@ -442,6 +447,7 @@ cp -r /var/lib/pikvm-sources/kvmd/contrib/keymaps /usr/share/kvmd/:
   file.copy:
     - source: /var/lib/pikvm-sources/kvmd/testenv/fakes/vcgencmd
     - mode: 0755
+    - force: true
 
 /etc/sudoers.d/kvmd:
   file.managed:
