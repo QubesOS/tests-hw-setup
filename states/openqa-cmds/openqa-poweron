@@ -3,6 +3,10 @@
 bootmode=normal
 # this is called in the worker dir
 iso="$(jq -r .ISO < vars.json)"
+install_oem="$(jq -r .INSTALL_OEM_STARTUP < vars.json)"
+# convert "null" or "0" to empty
+if [ "$install_oem" != "1" ]; then install_oem=; fi
+
 if [ -n "$iso" -a "$iso" != "null" ]; then
     assetdir="$(jq -r .ASSETDIR < vars.json)"
     iso_path="$assetdir/iso/$iso"
@@ -30,7 +34,11 @@ else
     sudo systemctl start gadget-control.service
     ssh -o UserKnownHostsFile=/usr/local/openqa-cmds/thor-known-hosts control@thor $bootmode poweron
     if [ "$bootmode" = "openqa" ] && [ -x /usr/local/bin/boot-menu-interact ]; then
-        /usr/local/bin/boot-menu-interact USB
+        boot_device=USB
+        if [ "$install_oem" = "1" ]; then
+            boot_device=OEM
+        fi
+        /usr/local/bin/boot-menu-interact "$boot_device"
     fi
 fi
 touch /tmp/is-power-on
