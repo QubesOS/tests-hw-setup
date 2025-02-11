@@ -28,6 +28,7 @@ if ! [ "\$(lvs -o vg_name,name --noheadings --select 'lv_name = "snap-$snapid-ro
     exit 1
 fi
 
+while ! vgchange -ay --ignoremonitoring; do sleep 1; done
 declare -A keep_volumes
 rootvol=
 for volume in \$(lvs -o vg_name,name --noheadings --separator '/' --select 'lv_role=public && lv_name =~ "^snap-$snapid-"'); do
@@ -78,8 +79,11 @@ fi
 umount /mnt/sysroot
 vgchange --ignoremonitoring -an
 if [ -e /dev/mapper/luks ]; then
-    sleep 1
-    cryptsetup close luks
+    for i in 1 2 3 4 5; do
+        sleep 1
+        cryptsetup close luks && break
+        vgchange --ignoremonitoring -an || :
+    done
 fi
 sync
 EOF

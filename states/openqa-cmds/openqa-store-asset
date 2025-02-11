@@ -75,6 +75,8 @@ if [ "\$(blkid -p "\$lvmpart" -o value -s TYPE)" = "crypto_LUKS" ]; then
     cryptsetup open "\$lvmpart" luks <<<"lukspass"
 fi
 
+while ! vgchange -ay --ignoremonitoring; do sleep 1; done
+
 rootvol=
 for volume in \$(lvs -o vg_name,name --noheadings --separator '/' --select 'lv_role=public && lv_name !~ "^snap-" && pool_lv=~"..."'); do
     snapname="snap-$snapid-\${volume##*/}"
@@ -110,8 +112,11 @@ fi
 umount /mnt/sysroot
 vgchange --ignoremonitoring -an
 if [ -e /dev/mapper/luks ]; then
-    sleep 1
-    cryptsetup close luks
+    for i in 1 2 3 4 5; do
+        sleep 1
+        cryptsetup close luks && break
+        vgchange --ignoremonitoring -an || :
+    done
 fi
 exit 0
 EOF
