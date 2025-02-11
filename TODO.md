@@ -10,6 +10,8 @@ ssh root@$host ln -s "vmlinux-$kver" "/boot/Image-$kver"
 ssh root@$host dracut --kver "$kver" -f
 ssh root@$host cp /boot/Image-$kver /boot/vc-manual/kernel8.img
 ssh root@$host cp /boot/initrd-$kver /boot/vc-manual/initrd.img
+ssh root@$host cp /boot/dtbs/$kver/broadcom/\*.dtb /boot/vc-manual/
+ssh root@$host cp -r /boot/dtbs/$kver/overlays /boot/vc-manual/
 
 ### restore working firmware (obsolete)
 
