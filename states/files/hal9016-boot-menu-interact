@@ -1,0 +1,47 @@
+#!/usr/bin/python3
+
+import socket
+import sys
+import time
+
+
+def interact(client_send, boot_device):
+    # press F2 few times, unfortunately we don't have any feedback at this point
+    for _ in range(12):
+        client_send(b"f2\n")
+        time.sleep(1)
+
+    # wait for the menu to really show up
+    time.sleep(5)
+    # go to boot manager
+    client_send(b"down\n")
+    time.sleep(0.1)
+    client_send(b"down\n")
+    time.sleep(0.1)
+    client_send(b"ret\n")
+    time.sleep(0.1)
+
+    # then go to the latest boot entry and launch it
+    client_send(b"pagedown\n")
+    time.sleep(0.1)
+    if boot_device == "OEM":
+        # with OEM install, the boot device is next to last
+        client_send(b"up\n")
+        time.sleep(0.1)
+    client_send(b"ret\n")
+    time.sleep(0.1)
+
+boot_device = "USB"
+if len(sys.argv) > 1 and sys.argv[1] == "-n":
+    fd = int(sys.argv[2])
+    if len(sys.argv) > 3:
+        boot_device = sys.argv[-1]
+    with open(fd, "wb", buffering=0) as client:
+        interact(client.write, boot_device)
+else:
+    if len(sys.argv) > 1:
+        boot_device = sys.argv[-1]
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+        client.connect("/var/run/usb-gadget.sock")
+        interact(client.send, boot_device)
+
