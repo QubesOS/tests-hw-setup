@@ -93,7 +93,7 @@ class BaseGadget:
             self.gadget_configfs_root, topdown=False
         ):
             for d in dirs:
-                if d in ("strings", "os_desc", "configs", "functions", "lun.0"):
+                if d in ("strings", "os_desc", "configs", "functions", "lun.0", "webusb"):
                     # Linux doesn't allow to remove this one
                     continue
                 os.rmdir(os.path.join(dirpath, d))
