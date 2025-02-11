@@ -282,3 +282,38 @@ test{{hostid}}:
   file.managed:
   - contents_pillar: "thor:ssh-privkey"
   - mode: 600
+
+### share cache dir
+
+openqa-share:
+  user.present:
+  - home: /home/openqa-share
+
+/home/openqa-share/.ssh:
+  file.directory:
+  - create: True
+  - dir_mode: 0755
+  - user: openqa-share
+
+/home/openqa-share/sync.lock:
+  file.managed:
+  - user: openqa-share
+  - contents: ""
+
+/etc/exports:
+  file.managed:
+  - contents: |
+      /srv/openqa-share 172.16.0.0/16(ro,async,subtree_check)
+      /srv/openqa-share 192.168.190.0/24(ro,async,subtree_check)
+
+/usr/local/bin/sync-openqa-share:
+  file.managed:
+  - contents: |
+      #!/bin/sh
+
+      flock /home/openqa-share/sync.lock rsync -av --max-size=8g --delete rsync://openqa.qubes-os.org/openqa-factory/ /srv/openqa-share/factory/
+      flock /home/openqa-share/sync.lock rsync -av --max-size=8g --delete rsync://openqa.qubes-os.org/openqa-tests/ /srv/openqa-share/tests/
+  - mode: 0755
+
+nfs-kernel-server:
+  pkg.installed: []

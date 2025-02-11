@@ -4,6 +4,7 @@
 {% set ip =  salt['grains.get']('ipv4', [])[0] %}
 {% set pool = salt['pillar.get']('openqa:worker:pool', 0) %}
 {% set hosts = salt['pillar.get']('openqa:worker:hosts', {}) %}
+{% set shared_assets = salt['pillar.get']('openqa:worker:shared_assets', False) %}
 
 packman:
   pkgrepo.managed:
@@ -30,6 +31,9 @@ openqa-worker-pkgs:
       - xorriso
       - mtools
       - pngquant
+      {% if shared_assets -%}
+      - nfs-client
+      {% endif %}
 
 openqa-cmds:
   file.recurse:
@@ -71,9 +75,11 @@ workers-global:
         #HOST = http://nemezis.lan:81
         WORKER_HOSTNAME = {{ hostname }}
         AUTOINST_URL_HOSTNAME = {{ hostname }}.testnet
+        {% if not shared_assets -%}
         CACHEDIRECTORY = /var/lib/openqa/cache
         CACHELIMIT = 12
         CACHEWORKERS = 1
+        {% endif -%}
         USE_PNGQUANT = 1
         UPLOAD_CHUNK_SIZE = 10000000
         # force x86_64, even though worker itself is arm64
@@ -98,6 +104,9 @@ workers-global:
         GENERAL_HW_INPUT_CMD = openqa-input
         GENERAL_HW_SOL_CMD = openqa-serial
         GENERAL_HW_SOL_ARGS = --hostid={{ hostid }}
+        {% if shared_assets -%}
+        SYNC_ASSETS_HOOK = ssh -o UserKnownHostsFile=/usr/local/openqa-cmds/thor-known-hosts openqa-share@thor.testnet
+        {% endif -%}
 {%- if salt['pillar.get']('hostapd:wpa_passphrase') %}
         WIFI_PASSWORD = {{ salt['pillar.get']('hostapd:wpa_passphrase') }}
         WIFI_NAME = {{ salt['pillar.get']('hostapd:ap_name') }}
@@ -105,10 +114,13 @@ workers-global:
 {%- if salt['pillar.get']('openqa:worker:serial_xen_opts', '') %}
         SERIAL_XEN_OPTS = {{ salt['pillar.get']('openqa:worker:serial_xen_opts', '') }}
 {% endif %}
+{% if not shared_assets -%}
 {%- for host in hosts %}
         [https://{{host}}]
         TESTPOOLSERVER = rsync://{{host}}/openqa-tests
 {% endfor %}
+{% endif %}
+
 
 {% for host in hosts %}
 {% set ip = salt['pillar.get']('openqa:hosts:' + host + ':ip', '') %}
@@ -145,6 +157,7 @@ openqa-worker@1:
   service.masked: []
 {% endif %}
 
+{% if not shared_assets %}
 /var/lib/openqa/share/factory:
   file.directory:
     - user: _openqa-worker
@@ -168,6 +181,7 @@ openqa-worker-cacheservice-minion:
     - enable: True
     - require:
       - service: openqa-worker-cacheservice
+{% endif %}
 
 /srv/www/htdocs/qinstall/iso:
   file.directory:
@@ -300,5 +314,14 @@ hdmi-init-edid.service:
     - enable: True
     - require:
       - file: /etc/systemd/system/hdmi-init-edid.service
+
+{% if shared_assets %}
+/var/lib/openqa/share:
+  mount.mounted:
+  - device: "thor.testnet:/srv/openqa-share"
+  - opts: "ro"
+  - persist: True
+  - fstype: nfs4
+{% endif %}
 
 #FIXME: order openqa after time sync?
