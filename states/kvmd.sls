@@ -71,6 +71,7 @@ kvmd-deps:
       - python3-zstandard
       - python3-psutil
       - python3-pipx
+      - python3-pip
       - python3-netifaces
       - python3-async-lru
       - python3-build
@@ -194,6 +195,21 @@ https://github.com/pikvm/ustreamer:
     - require:
       - file: /var/lib/pikvm-sources
 
+/var/lib/pikvm-sources/ustreamer:
+  file.directory:
+  - user: kvmd
+  - recurse:
+    - user
+
+# incremental ustreamer builds usually fail...
+ustreamer-clean:
+  cmd.run:
+  - name: git clean -f -x -d
+  - cwd: /var/lib/pikvm-sources/ustreamer
+  - runas: kvmd
+  - onchanges:
+    - git: "https://github.com/pikvm/ustreamer"
+
 ustreamer-make:
   cmd.run:
     - name: "rm -rf src/build python/build python/ustreamer.egg-info && make WITH_PYTHON=1 WITH_JANUS=1"
@@ -204,6 +220,8 @@ ustreamer-make:
     - require:
       - git: "https://github.com/pikvm/ustreamer"
       - pkg: kvmd-deps
+      - file: /var/lib/pikvm-sources/ustreamer
+      - cmd: ustreamer-clean
     - unless: test /var/lib/pikvm-sources/ustreamer/ustreamer -nt /var/lib/pikvm-sources/ustreamer/.git/index
 
 ustreamer-make-install:
