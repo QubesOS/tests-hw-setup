@@ -12,6 +12,7 @@ packman:
     - baseurl: https://ftp.gwdg.de/pub/linux/packman/suse/openSUSE_Tumbleweed
     - gpgkey: https://ftp.gwdg.de/pub/linux/packman/suse/openSUSE_Tumbleweed/repodata/repomd.xml.key
     - gpgcheck: 1
+    - disabled: true
     # FIXME!
     - gpgautoimport: True
 
@@ -25,7 +26,7 @@ openqa-worker-pkgs:
   pkg.installed:
     - pkgs:
       - openQA-worker
-      - ffmpeg-4
+      - ffmpeg-7
       - nginx
       - vim
       - xorriso
