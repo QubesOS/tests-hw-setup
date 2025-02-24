@@ -336,20 +336,32 @@ class Ps2HidGadget(BaseGadget):
     #define PH_PROTO_CMD_MOUSE_REL          ((u8)0x15)
 
     def write_mouse_move_report(self, x, y, wheel=0):
+        if (x, y) != (0, 0) and x < 1024//2 and y < 768//2:
+            # start from left top corner if it's closer
+            self.write_mouse_move_report(0, 0)
         if (x, y) == MOUSE_HIDE_POS:
             # re-sync mouse pos by moving way more than necessary
             for _ in range(1024 // 127 + 1):
                 self._send_request(struct.pack(">Bbbxx", 0x15, 127, 127))
                 self._send_request(struct.pack(">Bbbxx", 0x15, 127, 127))
+        elif (x, y) == (0, 0):
+            # re-sync mouse pos by moving way more than necessary
+            for _ in range(1024 // 127 + 1):
+                self._send_request(struct.pack(">Bbbxx", 0x15, -127, -127))
+                self._send_request(struct.pack(">Bbbxx", 0x15, -127, -127))
+                time.sleep(0.01)
         else:
             # something about mouse acceleration? the constants here are chosen
             # experimentally, to get pixel-precise result; do not touch unless
             # tested to also produce pixel-precis results
-            x += 3
-            y += 3
+            #x += 3
+            #y += 3
             offset = tuple(map(sub, (x, y), self.last_pos))
             while offset != (0, 0):
                 now_move = tuple(map(lambda a: max(min(a, 3), -3), offset))
+                # when moving from top left, first move right and only then down
+                if now_move[0] != 0 and now_move[1] != 0:
+                    now_move = (now_move[0], 0)
                 self._send_request(struct.pack(">Bbbxx", 0x15, now_move[0], now_move[1]))
                 time.sleep(0.01)
                 offset = tuple(map(sub, offset, now_move))
