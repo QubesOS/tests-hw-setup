@@ -301,7 +301,6 @@ kvmd-install:
 {{ copy_kvmd_file("configs/kvmd/main/v2-hdmi-rpi4.yaml", "/etc/kvmd/main.yaml") }}
 {{ copy_kvmd_file("configs/kvmd/logging.yaml", "/etc/kvmd/logging.yaml") }}
 {{ copy_kvmd_file("configs/kvmd/auth.yaml", "/etc/kvmd/auth.yaml") }}
-{{ copy_kvmd_file("configs/kvmd/meta.yaml", "/etc/kvmd/meta.yaml") }}
 {{ copy_kvmd_file("configs/kvmd/ipmipasswd", "/etc/kvmd/ipmipasswd") }}
 {{ copy_kvmd_file("configs/kvmd/vncpasswd", "/etc/kvmd/vncpasswd") }}
 {{ copy_kvmd_file("configs/kvmd/htpasswd", "/etc/kvmd/htpasswd") }}
@@ -311,6 +310,12 @@ kvmd-install:
 {{ copy_kvmd_file("configs/os/services/kvmd-otg.service", "/etc/systemd/system/kvmd-otg.service") }}
 {{ copy_kvmd_file("configs/os/services/kvmd-janus-static.service", "/etc/systemd/system/kvmd-janus-static.service") }}
 
+/etc/kvmd/meta.yaml:
+  file.managed:
+  - contents: |
+      server:
+        host: {{grains['id']}}
+      kvm: {}
 
 /usr/share/kvmd/platform:
   file.managed:
