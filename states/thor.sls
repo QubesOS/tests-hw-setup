@@ -165,6 +165,11 @@ control:
   - source: salt://thor/testbed-control
   - mode: 755
 
+/etc/tmpfiles.d/testbed-control.conf:
+  file.managed:
+  - contents: |
+      d /run/testbed-control 0755 root root - -
+
 /srv/tftp/grub2-efi:
   file.recurse:
   - source: salt://thor/grub2-efi
