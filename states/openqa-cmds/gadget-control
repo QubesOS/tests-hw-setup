@@ -623,7 +623,9 @@ def parse_and_send_cmd(gadget, line):
 
     key = gadget.get_keycode(key)
     mods += key.mods
-    gadget.write_keyboard_report(mods, key.code)
+    unique_mods = []
+    [unique_mods.append(mod) for mod in mods if mod not in unique_mods]
+    gadget.write_keyboard_report(unique_mods, key.code)
 
 
 async def handle_client(gadget, reader, writer):
