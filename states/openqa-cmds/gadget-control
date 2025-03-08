@@ -289,9 +289,24 @@ class Ps2HidGadget(BaseGadget):
         # usually mouse starts at the screen center
         self.last_pos = (1024 // 2, 768 // 2)
 
+    def _connect_hid(self):
+        timeout = 10
+        while timeout > 0 and not os.path.exists("/dev/ttyACM0"):
+            timeout -= 1
+            time.sleep(0.2)
+        self.hid_dev = serial.Serial("/dev/ttyACM0", 115200, timeout=2.0)
+
     def enable(self):
         super().enable()
-        self.hid_dev = serial.Serial("/dev/ttyACM0", 115200, timeout=2.0)
+        self._connect_hid()
+        # Set mouse and keyboard to PS2
+        # PH_PROTO_OUT1_KBD_PS2 = 0b00000011
+        # PH_PROTO_OUT1_MOUSE_PS2 = 0b00011000
+        self._send_request(struct.pack(">BBxxx", 0x03, 0b00000011))
+        self._send_request(struct.pack(">BBxxx", 0x04, 0b00011000))
+
+        # Clear events
+        self._send_request(b"\x10\x00\x00\x00\x00")
 
     def disable(self):
         if self.hid_dev:
@@ -321,6 +336,12 @@ class Ps2HidGadget(BaseGadget):
         rsp = self.hid_dev.read(8)
         assert rsp[0] == 0x34, f"invalid response header: 0x{rsp[0]:x}"
         assert rsp[1] & 0x80, f"invalid response code: 0x{rsp[1]:x}"
+        #define PH_PROTO_PONG_RESET_REQUIRED    ((u8)0b01000000)
+        if rsp[1] & 0b01000000:
+            self.hid_dev.close()
+            self.hid_dev = None
+            time.sleep(0.5)
+            self._connect_hid()
 
     # Commands (from kvmd/hid/pico/src/ph_proto.h):
     #define PH_PROTO_CMD_PING               ((u8)0x01)
