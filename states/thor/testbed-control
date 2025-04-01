@@ -35,9 +35,10 @@ Space separated list of actions; possible options:
 - sispm:SERIAL:SOCKET - Gembird EG-PMS2 device using sispmctl tool
   - SERIAL - device serial (example: 00:11:22:33:44)
   - SOCKET - socket number (1-4)
-- shelly:IP:PORT - Shelly smart plug via http API
+- shelly:IP:PORT[:PASSWORD] - Shelly smart plug via http API
   - IP - device IP
   - PORT - port number
+  - PASSWORD - API password
 - wol:IF:MAC - send wake-on-lan signal
   - IF - network interface name
   - MAC - mac address to send to
@@ -178,7 +179,10 @@ class Testbed:
             if action not in ("poweron", "poweroff"):
                 return
             ip, port = args[0:2]
-            r = requests.post(f"http://{ip}:{port}/rpc", json={
+            auth = None
+            if len(args) > 2:
+                auth = requests.auth.HTTPDigestAuth('admin', args[2])
+            r = requests.post(f"http://{ip}:{port}/rpc", auth=auth, json={
                 "id": 0,
                 "method": "Switch.Set",
                 "params": {
