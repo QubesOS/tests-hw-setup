@@ -120,6 +120,7 @@ gitlab-runner:
   pkg.installed:
    - require:
      - gitlab-repo
+     - user: gitlab-runner
   service.running:
    - enable: True
    - restart: True
