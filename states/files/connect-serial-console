@@ -1,8 +1,40 @@
-#!/bin/sh
-dev="$1"
-[ -n "$dev" ] || exit 1
-while ! picocom -b 115200 -q "$dev" 2>/dev/null; do
-    echo "*** DISCONNECTED ***"
-    udevadm wait "$dev"
-    echo "*** RECONNECTING ***"
-done
+#!/usr/bin/perl
+
+use IO::Poll qw(POLLIN POLLHUP);
+use Fcntl qw(F_SETFD FD_CLOEXEC);
+
+if (!$ARGV[0]) {
+	exit(1);
+}
+my $dev = $ARGV[0];
+
+while (1) {
+    my $ret = system("picocom -b 115200 -q '$dev' 2>/dev/null");
+    last if (!$ret);
+    print "***DISCONNECTED***\n";
+
+    # wait for udevadm or EOF
+    pipe my $parent, $child or die;
+    my $pid = fork();
+    die "fork() failed: $!" unless defined $pid;
+    if ($pid) {
+        close $child;
+    }
+    else {
+        close $parent;
+        # clear FD_CLOEXEC
+        fcntl($child, F_SETFD, 0);
+        exec("udevadm", "wait", $dev);
+    }
+    my $poll = IO::Poll->new();
+    $poll->mask($parent => POLLIN);
+    $poll->mask(STDIN => POLLIN);
+    $poll->poll;
+    # if that wasn't udevadm, kill it
+    kill(SIGTERM, $pid) if (!$poll->events($parent));
+    close($parent);
+    # if EOF, terminate
+    last if ($poll->events(STDIN));
+
+    print "***RECONNECTING***\n";
+}
