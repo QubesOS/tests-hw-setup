@@ -349,6 +349,16 @@ kvmd-install:
   - makedirs: True
   - mode: 644
 
+/etc/systemd/system/kvmd-otg.service.d/cleanup.conf:
+  file.managed:
+  - contents: |
+      [Service]
+      # cleanup after possibly unclean previous stop, otherwise start fails
+      ExecStartPre=-find /sys/kernel/config/usb_gadget/kvmd -delete
+      ExecStartPre=-rm -rf /run/kvmd/otg
+  - makedirs: True
+  - mode: 644
+
 /etc/kvmd/janus:
   file.symlink:
   - target: /var/lib/pikvm-sources/kvmd/configs/janus
