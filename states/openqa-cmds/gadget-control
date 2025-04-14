@@ -13,6 +13,7 @@ import shutil
 import asyncio
 import serial
 import time
+import signal
 from operator import sub
 
 # bottom right corner, 1024x768 resolution is hardcoded on the openQA side, but
@@ -665,6 +666,10 @@ async def handle_client(gadget, reader, writer):
             await writer.drain()
     writer.close()
 
+def sighandler(server):
+    server.close()
+    server.close_clients()
+
 
 async def main():
     parser = argparse.ArgumentParser()
@@ -710,7 +715,12 @@ async def main():
                 shutil.chown(args.socket, group=args.socket_group)
                 os.chmod(args.socket, 0o660)
             async with server:
-                await server.serve_forever()
+                loop = asyncio.get_event_loop()
+                loop.add_signal_handler(signal.SIGINT, sighandler, server)
+                try:
+                    await server.serve_forever()
+                except asyncio.CancelledError:
+                    pass
         else:
             for line in fileinput.input(files=[]):
                 try:
