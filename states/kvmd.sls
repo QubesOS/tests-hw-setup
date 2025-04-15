@@ -384,9 +384,11 @@ kvmd-install:
           server_name {{grains['id']}}.testnet {{grains['id']}};
           location /qinstall {
               alias /srv/www/htdocs/qinstall;
+              auth_request off;
           }
           location /gitlab-ci {
               alias /srv/www/htdocs/gitlab-ci;
+              auth_request off;
           }
           include /etc/kvmd/nginx/kvmd.ctx-server.conf;
           location /janus/ws {
