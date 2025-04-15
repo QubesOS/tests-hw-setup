@@ -9,6 +9,7 @@ import logging
 import logging.handlers
 import functools
 import tomllib
+from textwrap import dedent
 
 import requests
 
@@ -355,29 +356,43 @@ class Testbed:
                 subprocess.run(["dropbearkey", "-y", "-f", os.path.join(rescuedir, "initrd", "main", "etc", "dropbear", key_file)])
 
 
+def cmd_status(testbed):
+    status_msg = f"""
+    Status:
+      Selected target: {testbed.hostid}
+      Current boot mode: {testbed.get_current_mode()}
+      Currently in use by: {testbed.get_current_claim()}"""
+    print(dedent(status_msg))
+
 
 def cmd_help(testbed):
-    print(f"Selected target: {testbed.hostid}")
-    print(f"Current boot mode: {testbed.get_current_mode()}")
-    print(f"Currently in use by: {testbed.get_current_claim()}")
-    print("")
-    print("Available commands:")
-    print(" - reset - hard reset the target")
-    print(" - poweron - power on the target")
-    print(" - poweroff - (hard) power off the target")
-    print(" - rescue - switch next boot to rescue system (doesn't load anything from the disk)")
-    print(" - fallback - switch next boot to fallback system (loads /boot/efi/EFI/qubes/grub-fallback.cfg)")
-    print(" - normal - switch next boot to normal system (entry with 'Qubes' in name in case of UEFI)")
-    print(" - custom - switch next boot to custom grub config (/srv/tftp/test{target}/grub.cfg)")
-    print(" - openqa - switch next boot to openqa grub config (/srv/tftp/test{target}/grub-openqa.cfg)")
-    print(" - gitlab-ci - switch next boot to gitlab-ci grub config (/srv/tftp/test{target}/grub-gitlab-ci.cfg)")
-    print(" - hostkey - print SSH hostkey used by the rescue system")
-    print(" - wake - wake up the system (either wake-on-lan, or button press)")
-    print(" - console - get serial console (if available)")
-    print(" - vnc:start - start VNC proxy for HDMI with USB keyboard/mouse input; do not use when openqa is running")
-    print(" - vnc:stop - stop VNC proxy")
-    print(" - claim:name - claim the machine for given service (gitlab, openqa, manual)")
-    print(" - release:name - release claimed machine - name must match the current claim")
+    help_msg = """\
+    Ownership commands:
+      claim:NAME    - claim the machine for given service (gitlab, openqa, manual)
+      release:NAME  - release claimed machine - name must match the current claim
+
+    Boot commands (switches only on next boot):
+      rescue     - rescue system (doesn't load anything from the disk)
+      fallback   - fallback system (loads /boot/efi/EFI/qubes/grub-fallback.cfg)
+      normal     - normal system (entry with 'Qubes' in name in case of UEFI)
+      custom     - custom grub config (/srv/tftp/test{target}/grub.cfg)
+      openqa     - openqa grub config (/srv/tftp/test{target}/grub-openqa.cfg)
+      gitlab-ci  - gitlab-ci grub config (/srv/tftp/test{target}/grub-gitlab-ci.cfg)
+
+    Power commands:
+      poweron   - power on the target
+      wake      - wake up the system (either wake-on-lan, or button press)
+      poweroff  - (hard) power off the target
+      reset     - hard reset the target
+
+    Connection commands:
+      status     - print target status
+      hostkey    - print SSH hostkey used by the rescue system
+      console    - get serial console (if available)
+      vnc:start  - start VNC proxy for HDMI with USB keyboard/mouse input; do not use when openqa is running
+      vnc:stop   - stop VNC proxy"""
+    print(dedent(help_msg))
+    cmd_status(testbed)
     sys.exit(0)
 
 def setup_logging():
@@ -417,6 +432,8 @@ def main():
         testbed.log.info("command: %s", cmd)
         if cmd == "help":
             cmd_help(testbed)
+        elif cmd == "status":
+            cmd_status(testbed)
         elif cmd == "reset":
             testbed.reset()
         elif cmd == "poweron":
