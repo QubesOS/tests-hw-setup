@@ -1,4 +1,5 @@
 {% set is_tcp_serial = salt['pillar.get']('openqa:worker:serial', 'tcp') == 'tcp' %}
+{% set hdmi4k = salt['pillar.get']('openqa:worker:hdmi4k', False) %}
 # default settings, to mimic interactive install
 
 keyboard --vckeymap=us
@@ -27,7 +28,11 @@ else
 fi
 # gnome-kiosk configures outputs on its own, the below xorg.conf snippet will
 # properly choose the resolution, but position needs to be reset via xrandr anyway...
+{%- if hdmi4k %}
+systemd-run --on-active=15s xrandr -display :1 --output "$internal" --mode 3840x2160 --same-as "$hdmi"
+{%- else %}
 systemd-run --on-active=15s xrandr -display :1 --output "$internal" --mode 1024x768 --same-as "$hdmi"
+{%- endif %}
 cat <<EOF >/etc/X11/xorg.conf.d/30-monitor-layout.conf
 Section "Monitor"
     Identifier  "panel"
@@ -37,7 +42,11 @@ EndSection
 Section "Monitor"
     Identifier  "HDMI"
     Option      "Position" "0 0"
+{%- if hdmi4k %}
+    Option      "PreferredMode" "3840x2160"
+{%- else %}
     Option      "PreferredMode" "1024x768"
+{%- endif %}
     Option      "Primary" "true"
 EndSection
 Section "OutputClass"
@@ -128,7 +137,11 @@ EndSection
 Section "Monitor"
     Identifier  "HDMI"
     Option      "Position" "0 0"
+{%- if hdmi4k %}
+    Option      "PreferredMode" "3840x2160"
+{%- else %}
     Option      "PreferredMode" "1024x768"
+{%- endif %}
     Option      "Primary" "true"
 EndSection
 Section "OutputClass"

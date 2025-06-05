@@ -5,6 +5,7 @@
 {% set pool = salt['pillar.get']('openqa:worker:pool', 0) %}
 {% set hosts = salt['pillar.get']('openqa:worker:hosts', {}) %}
 {% set shared_assets = salt['pillar.get']('openqa:worker:shared_assets', False) %}
+{% set hdmi4k = salt['pillar.get']('openqa:worker:hdmi4k', False) %}
 {% if salt['grains.get']('productname').count('Orange') %}
 {%   set videodev = 'video1' %}
 {% else %}
@@ -71,7 +72,8 @@ openqa-cmds-non-exec:
 /etc/sysctl.d/openqa.conf:
   file.managed:
     - contents: |
-        fs.pipe-max-size = 4194304
+        fs.pipe-max-size = {{ 24884224 if hdmi4k else 4194304 }}
+        fs.pipe-user-pages-soft = {{ 65536 if hdmi4k else 16384 }}
 
 workers-global:
   file.managed:
@@ -110,7 +112,11 @@ workers-global:
         {% else -%}
         GENERAL_HW_VIDEO_STREAM_URL = /dev/{{videodev}}?fps=2
         {% endif -%}
+        {% if hdmi4k -%}
+        GENERAL_HW_EDID = type=hdmi-4k-300mhz
+        {% else -%}
         GENERAL_HW_EDID = file=/usr/local/openqa-cmds/1024x768.txt
+        {% endif -%}
         GENERAL_HW_INPUT_CMD = openqa-input
         GENERAL_HW_SOL_CMD = openqa-serial
         GENERAL_HW_SOL_ARGS = --hostid={{ hostid }}
@@ -313,7 +319,11 @@ service-control-user:
         
         [Service]
         Type=oneshot
+{%- if hdmi4k %}
+        ExecStart=/usr/bin/v4l2-ctl --device=/dev/{{videodev}} --set-edid=type=hdmi-4k-300mhz
+{%- else %}
         ExecStart=/usr/bin/v4l2-ctl --device=/dev/{{videodev}} --set-edid=file=/usr/local/openqa-cmds/1024x768.txt
+{%- endif %}
         ExecStop=/usr/bin/v4l2-ctl --device=/dev/{{videodev}} --clear-edid
         RemainAfterExit=true
         

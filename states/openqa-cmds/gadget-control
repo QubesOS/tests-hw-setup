@@ -16,17 +16,17 @@ import time
 import signal
 from operator import sub
 
-# bottom right corner, 1024x768 resolution is hardcoded on the openQA side, but
-# also in the USB HID descriptor below
-MOUSE_HIDE_POS = (1023, 767)
 
 class BaseGadget:
-    def __init__(self, storage_path=None, cdrom=False):
+    def __init__(self, storage_path=None, cdrom=False, resolution=(1024, 768)):
         self.gadget_configfs_root = pathlib.Path("/sys/kernel/config/usb_gadget/kbd")
         self.udc = os.listdir("/sys/class/udc")[0]
         self.storage_path = storage_path
         self.storage_cdrom = cdrom
         self.enable_usb_gadget = bool(self.storage_path)
+        self.resolution = resolution
+        # bottom right corner
+        self.mouse_hide_pos = (resolution[0]-1, resolution[1]-1)
 
     def set_sysfs_attr(self, name, value):
         path = self.gadget_configfs_root / name
@@ -115,8 +115,8 @@ class BaseGadget:
 
 
 class UsbHidGadget(BaseGadget):
-    def __init__(self, storage_path=None, cdrom=False):
-        super().__init__(storage_path=storage_path, cdrom=cdrom)
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
         self.mouse_dev = None
         self.keyboard_dev = None
         self.enable_usb_gadget = True
@@ -176,11 +176,17 @@ class UsbHidGadget(BaseGadget):
             os.path.join(self.gadget_configfs_root, "configs/c.1/hid.usb0"),
         )
 
+    @staticmethod
+    def _split_16bit(number):
+        return (number & 0xff, number >> 8)
+
     def _create_mouse_function(self):
         p = "functions/hid.usb1/"
         self.set_sysfs_attr(p + "protocol", "0")  # tablet
         self.set_sysfs_attr(p + "subclass", "0")  # unspecified
         self.set_sysfs_attr(p + "report_length", "7")
+        res_x = self._split_16bit(self.resolution[0])
+        res_y = self._split_16bit(self.resolution[1])
         # fmt: off
         # this mouse reports ABSOLUTE position, not relative!
         report_descriptor = [
@@ -207,17 +213,17 @@ class UsbHidGadget(BaseGadget):
                 0x05, 0x01,        #     Usage Page (Generic Desktop Ctrls)
                 0x09, 0x30,        #     Usage (X)
                 0x15, 0x00,        #     Logical Minimum (0)
-                0x26, 0x00, 0x04,        #     Logical Maximum (1024)
+                0x26, *res_x,      #     Logical Maximum (1024 or so)
                 0x35, 0x00,        #     Physical Minimum (0)
-                0x46, 0x00, 0x04,        #     Physical Maximum (1024)
+                0x46, *res_x,      #     Physical Maximum (1024 or so)
                 #0x16, 0x01, 0x80,        #     Logical Minimum (-32767)
                 #0x26, 0xFF, 0x7F,        #     Logical Maximum (32767)
                 0x75, 0x10,        #     Report Size (16)
                 0x95, 0x01,        #     Report Count (1)
                 0x81, 0x02,        #     Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
                 0x09, 0x31,        #     Usage (Y)
-                0x26, 0x00, 0x03,        #     Logical Maximum (768)
-                0x46, 0x00, 0x03,        #     Physical Maximum (768)
+                0x26, *res_y,      #     Logical Maximum (768 or so)
+                0x46, *res_y,      #     Physical Maximum (768 or so)
                 0x81, 0x02,        #     Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
 
                 # Wheel
@@ -283,8 +289,8 @@ class UsbHidGadget(BaseGadget):
 
 
 class Ps2HidGadget(BaseGadget):
-    def __init__(self, storage_path=None, cdrom=False):
-        super().__init__(storage_path=None, cdrom=False)
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
         self.hid_dev = None
         self.pressed_buttons = 0
         # usually mouse starts at the screen center
@@ -361,7 +367,7 @@ class Ps2HidGadget(BaseGadget):
         if (x, y) != (0, 0) and x < 1024//2 and y < 768//2:
             # start from left top corner if it's closer
             self.write_mouse_move_report(0, 0)
-        if (x, y) == MOUSE_HIDE_POS:
+        if (x, y) == self.mouse_hide_pos:
             # re-sync mouse pos by moving way more than necessary
             for _ in range(1024 // 127 + 1):
                 self._send_request(struct.pack(">Bbbxx", 0x15, 127, 127))
@@ -676,6 +682,10 @@ async def main():
     parser.add_argument("--storage", default=[], action="append")
     parser.add_argument("--is-cdrom", default=False, action="store_true")
     parser.add_argument("--storage-only", default=False, action="store_true")
+    parser.add_argument("--resolution", action="store",
+                        help="Screen resolution for the tablet device (default: 1024x768)")
+    parser.add_argument("--resolution-json", action="store",
+                        help="JSON file with XRES/XRES for for the tablet device. Useful to point at openQA job vars.json file.")
     parser.add_argument("--ps2", default=False, action="store_true",
                         help="Control via PS/2 kbd/mouse instead of USB, requires PiKVM PS2 bridge at /dev/ttyACM0")
     parser.add_argument(
@@ -706,7 +716,21 @@ async def main():
     elif args.ps2:
         gadget_class = Ps2HidGadget
 
-    with gadget_class(storage_path=storage, cdrom=args.is_cdrom) as gadget:
+    gadget_args = {
+        "storage_path": storage,
+        "cdrom": args.is_cdrom,
+    }
+
+    if args.resolution_json:
+        with open(args.resolution_json) as f:
+            vars = json.load(f)
+        if "XRES" in vars and "YRES" in vars:
+            gadget_args["resolution"] = (int(vars["XRES"]), int(vars["YRES"]))
+
+    if args.resolution:
+        gadget_args["resolution"] = tuple(map(int, args.resolution.split("x")))
+
+    with gadget_class(**gadget_args) as gadget:
         if args.socket:
             server = await asyncio.start_unix_server(
                 functools.partial(handle_client, gadget), args.socket

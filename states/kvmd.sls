@@ -165,7 +165,7 @@ janus-make-install:
 /usr/local/share/janus/javascript/adapter.js:
   file.managed:
   - source: "https://webrtc.github.io/adapter/adapter-latest.js"
-  - source_hash: a89e28bb427371961bd33fb4f781b5d6d4010073ae6203f91b6a934f262fcc3c
+  - source_hash: 6128cd1d524521d93c9b7601ec80063aa50bb35bd420964fa5984c13df31b542
 
 /usr/local/share/janus/javascript/janus.js-prepend:
   file.prepend:
@@ -192,14 +192,14 @@ https://github.com/pikvm/ustreamer:
     - branch: master
     - rev: c848756d53626d2ba462a698777c6f4e32bf100c
     - user: kvmd
+    - force_reset: true
     - require:
       - file: /var/lib/pikvm-sources
 
 /var/lib/pikvm-sources/ustreamer:
-  file.directory:
-  - user: kvmd
-  - recurse:
-    - user
+  file.patch:
+    - source: salt://files/ustreamer-4k.patch
+    - strip: 1
 
 # incremental ustreamer builds usually fail...
 ustreamer-clean:
@@ -247,7 +247,7 @@ https://github.com/pikvm/kvmd:
   git.latest:
     - target: /var/lib/pikvm-sources/kvmd
     - branch: master
-    - rev: 85a2f2367d3c7e29f6e1857e110d47dfd5297814
+    - rev: 16a1dbd9ed3ec176a06a331964c337842471f857  # v4.71
     - force_reset: true
     - user: kvmd
     - require:

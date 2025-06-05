@@ -1,0 +1,13 @@
+diff --git a/src/libs/memsinksh.c b/src/libs/memsinksh.c
+index 02a2e3f..0c12371 100644
+--- a/src/libs/memsinksh.c
++++ b/src/libs/memsinksh.c
+@@ -61,7 +61,7 @@ uz us_memsink_calculate_size(const char *obj) {
+ 		} else if (!strcasecmp(ptr, "h264")) {
+ 			return 2 * 1024 * 1024;
+ 		} else if (!strcasecmp(ptr, "raw")) {
+-			return 1920 * 1200 * 3; // RGB
++			return 3840 * 2160 * 3; // RGB
+ 		}
+ 	}
+ 	return 0;

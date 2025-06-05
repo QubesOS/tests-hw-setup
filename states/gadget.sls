@@ -1,5 +1,6 @@
 {% set hostname =  salt['pillar.get']('openqa:worker:hostname', {}) %}
 {% set hostid = hostname | replace('hal9', '') | int %}
+{% set hdmi4k = salt['pillar.get']('openqa:worker:hdmi4k', False) %}
 
 video-pkgs:
   pkg.installed:
@@ -26,6 +27,7 @@ video-pkgs:
     - context:
         hostid: {{hostid}}
         ps2: {{salt['pillar.get']('gadget:hid', 'usb') == 'ps2'}}
+        hdmi4k: {{hdmi4k}}
 
 
 ### "custom" boot mode via emulated USB stick
