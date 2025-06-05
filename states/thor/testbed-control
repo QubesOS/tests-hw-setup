@@ -241,22 +241,23 @@ class Testbed:
         if claim not in ["gitlab", "openqa", "manual"]:
             raise ValueError(f"Unsupported claim: {claim}")
 
-        current_claim = self.get_current_claim()
-        if current_claim == claim:
-            return
+        with Lock(f"claim-{self.hostid}"):
+            current_claim = self.get_current_claim()
+            if current_claim == claim:
+                return
 
-        if current_claim:
-            raise PermissionError(f"Testbed {self.hostid} already claimed by {current_claim}")
+            if current_claim:
+                raise PermissionError(f"Testbed {self.hostid} already claimed by {current_claim}")
 
-        if claim != "gitlab" and self._has_gitlab():
-            subprocess.run(["ssh", f"service-control@{self.hal_hostname}",
-                            "sudo systemctl stop gitlab-runner.service"])
-        if claim != "openqa":
-            subprocess.run(["ssh", f"service-control@{self.hal_hostname}",
-                            "sudo systemctl stop openqa-worker.target"])
+            if claim != "gitlab" and self._has_gitlab():
+                subprocess.run(["ssh", f"service-control@{self.hal_hostname}",
+                                "sudo systemctl stop gitlab-runner.service"])
+            if claim != "openqa":
+                subprocess.run(["ssh", f"service-control@{self.hal_hostname}",
+                                "sudo systemctl stop openqa-worker.target"])
 
-        with open(claimfile, 'w') as f:
-            f.write(claim)
+            with open(claimfile, 'w') as f:
+                f.write(claim)
 
     def release(self, claim):
         claimfile = os.path.join(bootconfdir, f"testbed{self.hostid}-claim")
