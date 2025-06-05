@@ -415,6 +415,8 @@ kvmd-install:
   file.managed:
     - contents: |
         KERNEL=="video[0-9]*", KERNELS=="fe801000.csi|fe801000.csi1", GROUP="video"
+        # Orange Pi 5+
+        KERNEL=="video[0-9]*", ENV{ID_PATH}=="platform-fdee0000.hdmi_receiver", SYMLINK+="kvmd-video"
         KERNEL=="ttyACM[0-9]*", ENV{ID_VENDOR_ID}=="1209", ENV{ID_MODEL_ID}=="eda3", GROUP="kvmd", SYMLINK+="kvmd-hid-bridge"
 
 # handle rename

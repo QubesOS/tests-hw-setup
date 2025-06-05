@@ -3,6 +3,7 @@
     - source: salt://files/power-press
     - mode: '0755'
 
+{% if salt['grains.get']('productname').count('Raspberry') %}
 # RPi.GPIO isn't packaged...
 power-press-pkgs:
   pkg.installed:
@@ -18,6 +19,7 @@ RPi.GPIO:
       - "--break-system-packages"
     - require:
       - pkg: power-press-pkgs
+{% endif %}
 
 /etc/openqa/hw-control.conf-buttons:
   ini.options_present:

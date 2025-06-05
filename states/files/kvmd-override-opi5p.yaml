@@ -1,0 +1,35 @@
+kvmd:
+    streamer:
+        forever: true
+        h264_bitrate:
+            default: 5000
+        cmd:
+            - "/usr/bin/ustreamer"
+            - "--device=/dev/kvmd-video"
+            - "--persistent"
+            - "--dv-timings"
+            - "--format=bgr24"
+#           - "--format-swap-rgb"
+            - "--buffers=4"
+            - "--encoder=cpu"
+            - "--workers=3"
+            - "--quality={quality}"
+            - "--desired-fps={desired_fps}"
+            - "--drop-same-frames=30"
+            - "--unix={unix}"
+            - "--unix-rm"
+            - "--unix-mode=0660"
+            - "--exit-on-parent-death"
+            - "--process-name-prefix={process_name_prefix}"
+            - "--notify-parent"
+            - "--no-log-colors"
+            - "--jpeg-sink=kvmd::ustreamer::jpeg"
+            - "--jpeg-sink-mode=0660"
+
+vnc:
+    memsink:
+        jpeg:
+            sink: "kvmd::ustreamer::jpeg"
+        h264:
+#            sink: "kvmd::ustreamer::h264"
+            sink: ""

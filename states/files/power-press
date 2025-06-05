@@ -4,11 +4,17 @@
 # another computer.
 # The first argument is button name, the second is press type (short/long).
 
-import RPi.GPIO as GPIO
+try:
+    import RPi.GPIO as GPIO
+    has_rpi = True
+except ImportError:
+    has_rpi = False
 import time
 import sys
 import os
 import configparser
+
+import gpiod
 
 
 def load_config():
@@ -16,7 +22,7 @@ def load_config():
     config.read('/etc/openqa/hw-control.conf')
     return config
 
-def servo(pin, idle_pos, press_pos, press_time):
+def servo_rpi(pin, idle_pos, press_pos, press_time):
     pin = int(pin)
     idle_pos, press_pos = float(idle_pos), float(press_pos)
     GPIO.setmode(GPIO.BCM)
@@ -29,6 +35,31 @@ def servo(pin, idle_pos, press_pos, press_time):
     time.sleep(0.2)
     p.stop()
     GPIO.cleanup()
+
+def servo_gpiod(pin, idle_pos, press_pos, press_time):
+    pin = int(pin)
+    def pwm(line, pos, pulse_time):
+        pos = float(pos)
+        time_start = time.time()
+        while (time_now := time.time()) < time_start+press_time:
+            line.set_value(1)
+            time.sleep(pos/100/50)
+            line.set_value(0)
+            time.sleep(time_now+1/50-time.time())
+
+    with gpiod.Chip(str(pin // 32)) as chip:
+        line = chip.get_line(pin % 32)
+        line.request('power-press')
+        line.set_direction_output()
+        pwm(line, press_pos, press_time)
+        pwm(line, idle_pos, 0.2)
+        line.set_direction_input()
+        line.release()
+
+if has_rpi:
+    servo = servo_rpi
+else:
+    servo = servo_gpiod
 
 def switch(pin, idle_state, press_state, press_time):
     pin = int(pin)

@@ -5,6 +5,12 @@
 {% set pool = salt['pillar.get']('openqa:worker:pool', 0) %}
 {% set hosts = salt['pillar.get']('openqa:worker:hosts', {}) %}
 {% set shared_assets = salt['pillar.get']('openqa:worker:shared_assets', False) %}
+{% if salt['grains.get']('productname').count('Orange') %}
+{%   set videodev = 'video1' %}
+{% else %}
+{%   set videodev = 'video0' %}
+{% endif %}
+
 
 packman:
   pkgrepo.managed:
@@ -73,7 +79,6 @@ workers-global:
     - contents: |
         [global]
         HOST = {% for host in hosts %}https://{{host}} {% endfor %}
-        #HOST = http://nemezis.lan:81
         WORKER_HOSTNAME = {{ hostname }}
         AUTOINST_URL_HOSTNAME = {{ hostname }}.testnet
         {% if not shared_assets -%}
@@ -97,9 +102,13 @@ workers-global:
         GENERAL_HW_IMAGE_CMD = openqa-store-asset
         GENERAL_HW_IMAGE_ARGS = --hostid={{ hostid }}
         {% if salt['pillar.get']('openqa:worker:ustreamer', False) -%}
-        GENERAL_HW_VIDEO_STREAM_URL = ustreamer:///dev/video0?fps=2
+        {% if salt['grains.get']('productname').count('Orange') -%}
+        GENERAL_HW_VIDEO_STREAM_URL = ustreamer:///dev/{{videodev}}?fps=2&format=BGR24
         {% else -%}
-        GENERAL_HW_VIDEO_STREAM_URL = /dev/video0?fps=2
+        GENERAL_HW_VIDEO_STREAM_URL = ustreamer:///dev/{{videodev}}?fps=2
+        {% endif -%}
+        {% else -%}
+        GENERAL_HW_VIDEO_STREAM_URL = /dev/{{videodev}}?fps=2
         {% endif -%}
         GENERAL_HW_EDID = file=/usr/local/openqa-cmds/1024x768.txt
         GENERAL_HW_INPUT_CMD = openqa-input
@@ -298,13 +307,14 @@ service-control-user:
     - contents: |
         [Unit]
         Description=EDID loader for TC358743
-        Wants=dev-video0.device
-        After=dev-video0.device systemd-modules-load.service
+        #Wants=dev-{{videodev}}.device
+        #After=dev-{{videodev}}.device systemd-modules-load.service
+        After=systemd-modules-load.service
         
         [Service]
         Type=oneshot
-        ExecStart=/usr/bin/v4l2-ctl --device=/dev/video0 --set-edid=file=/usr/local/openqa-cmds/1024x768.txt --fix-edid-checksums --info-edid
-        ExecStop=/usr/bin/v4l2-ctl --device=/dev/video0 --clear-edid
+        ExecStart=/usr/bin/v4l2-ctl --device=/dev/{{videodev}} --set-edid=file=/usr/local/openqa-cmds/1024x768.txt
+        ExecStop=/usr/bin/v4l2-ctl --device=/dev/{{videodev}} --clear-edid
         RemainAfterExit=true
         
         [Install]
