@@ -7,6 +7,9 @@ base:
   'hal9* and G@productname:*Orange*5*Plus':
     - match: compound
     - opi5plus
+  'hal9* and G@productname:*Radxa*':
+    - match: compound
+    - rock5bp
   hal9002:
     - openqa-worker
     - gadget
