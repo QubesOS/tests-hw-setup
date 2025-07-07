@@ -71,3 +71,7 @@ janus:
 otg:
   msd:
     start: False
+
+otgnet:
+  firewall:
+    iptables_cmd: "/bin/false"

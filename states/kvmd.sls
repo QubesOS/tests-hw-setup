@@ -38,7 +38,7 @@ kvmd-static-deps:
       - libtool
       - libnice-devel
       - libconfig-devel
-      - libsrtp-devel
+      - libsrtp2-devel
       - libwebsockets-devel
       - gengetopt
       - alsa-devel
@@ -356,6 +356,7 @@ kvmd-install:
       # cleanup after possibly unclean previous stop, otherwise start fails
       ExecStartPre=-find /sys/kernel/config/usb_gadget/kvmd -delete
       ExecStartPre=-rm -rf /run/kvmd/otg
+      ExecStopPost=-find /sys/kernel/config/usb_gadget/kvmd -delete
   - makedirs: True
   - mode: 644
 

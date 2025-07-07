@@ -86,10 +86,15 @@ systemd-sysvcompat:
     - contents: |
         #!/bin/sh
 
-        iptables -A POSTROUTING -t nat -o eth0 -s 192.168.0.0/24 -j MASQUERADE
+        modprobe nf_tables
+        nft add table nat
+        nft 'add chain nat postrouting { type nat hook postrouting priority 100 ; }'
+        nft add rule nat postrouting masquerade
+
         echo 1 > /proc/sys/net/ipv4/ip_forward
         # shelly plug, if applicable
-        iptables -t nat -A PREROUTING -s 192.168.190.2 -p tcp --dport 81 -j DNAT --to 192.168.0.10:80
+        nft 'add chain nat prerouting { type nat hook prerouting priority -100; }'
+        nft 'add rule nat prerouting ip saddr 192.168.190.2 tcp dport 81 dnat to 192.168.0.10:80'
 
     - makedirs: True
     - mode: 0755
