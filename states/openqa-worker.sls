@@ -6,11 +6,6 @@
 {% set hosts = salt['pillar.get']('openqa:worker:hosts', {}) %}
 {% set shared_assets = salt['pillar.get']('openqa:worker:shared_assets', False) %}
 {% set hdmi4k = salt['pillar.get']('openqa:worker:hdmi4k', False) %}
-{% if salt['grains.get']('productname').count('Orange') %}
-{%   set videodev = 'video1' %}
-{% else %}
-{%   set videodev = 'video0' %}
-{% endif %}
 
 
 packman:
@@ -104,13 +99,13 @@ workers-global:
         GENERAL_HW_IMAGE_CMD = openqa-store-asset
         GENERAL_HW_IMAGE_ARGS = --hostid={{ hostid }}
         {% if salt['pillar.get']('openqa:worker:ustreamer', False) -%}
-        {% if salt['grains.get']('productname').count('Orange') -%}
-        GENERAL_HW_VIDEO_STREAM_URL = ustreamer:///dev/{{videodev}}?fps=2&format=BGR24
+        {% if salt['grains.get']('productname').count('Orange') or salt['grains.get']('productname').count('ROCK') -%}
+        GENERAL_HW_VIDEO_STREAM_URL = ustreamer:///dev/openqa-video?fps=2&format=BGR24
         {% else -%}
-        GENERAL_HW_VIDEO_STREAM_URL = ustreamer:///dev/{{videodev}}?fps=2
+        GENERAL_HW_VIDEO_STREAM_URL = ustreamer:///dev/openqa-video?fps=2
         {% endif -%}
         {% else -%}
-        GENERAL_HW_VIDEO_STREAM_URL = /dev/{{videodev}}?fps=2
+        GENERAL_HW_VIDEO_STREAM_URL = /dev/openqa-video?fps=2
         {% endif -%}
         {% if hdmi4k -%}
         GENERAL_HW_EDID = type=hdmi-4k-300mhz
@@ -313,22 +308,27 @@ service-control-user:
     - contents: |
         [Unit]
         Description=EDID loader for TC358743
-        #Wants=dev-{{videodev}}.device
-        #After=dev-{{videodev}}.device systemd-modules-load.service
         After=systemd-modules-load.service
         
         [Service]
         Type=oneshot
 {%- if hdmi4k %}
-        ExecStart=/usr/bin/v4l2-ctl --device=/dev/{{videodev}} --set-edid=type=hdmi-4k-300mhz
+        ExecStart=/usr/bin/v4l2-ctl --device=/dev/openqa-video --set-edid=type=hdmi-4k-300mhz
 {%- else %}
-        ExecStart=/usr/bin/v4l2-ctl --device=/dev/{{videodev}} --set-edid=file=/usr/local/openqa-cmds/1024x768.txt
+        ExecStart=/usr/bin/v4l2-ctl --device=/dev/openqa-video --set-edid=file=/usr/local/openqa-cmds/1024x768.txt
 {%- endif %}
-        ExecStop=/usr/bin/v4l2-ctl --device=/dev/{{videodev}} --clear-edid
+        ExecStop=/usr/bin/v4l2-ctl --device=/dev/openqa-video --clear-edid
         RemainAfterExit=true
         
         [Install]
         WantedBy=multi-user.target
+
+/etc/udev/rules.d/90-openqa-video.rules:
+  file.managed:
+    - contents: |
+        KERNEL=="video[0-9]*", KERNELS=="fe801000.csi|fe801000.csi1", SYMLINK+="openqa-video"
+        # Rockchip RK3588
+        KERNEL=="video[0-9]*", ENV{ID_PATH}=="platform-fdee0000.hdmi_receiver", SYMLINK+="openqa-video"
 
 hdmi-init-edid.service:
   service.running:
