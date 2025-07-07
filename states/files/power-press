@@ -38,28 +38,59 @@ def servo_rpi(pin, idle_pos, press_pos, press_time):
 
 def servo_gpiod(pin, idle_pos, press_pos, press_time):
     pin = int(pin)
-    def pwm(line, pos, pulse_time):
+    def pwm(line, line_no, pos, pulse_time):
         pos = float(pos)
         time_start = time.time()
         while (time_now := time.time()) < time_start+press_time:
-            line.set_value(1)
+            line.set_value(line_no, gpiod.line.Value.ACTIVE)
             time.sleep(pos/100/50)
-            line.set_value(0)
+            line.set_value(line_no, gpiod.line.Value.INACTIVE)
             time.sleep(time_now+1/50-time.time())
 
-    with gpiod.Chip(str(pin // 32)) as chip:
-        line = chip.get_line(pin % 32)
-        line.request('power-press')
-        line.set_direction_output()
-        pwm(line, press_pos, press_time)
-        pwm(line, idle_pos, 0.2)
-        line.set_direction_input()
+    with gpiod.Chip("/dev/gpiochip" + str(pin // 32)) as chip:
+        line_no = pin % 32
+        line = chip.request_lines({
+            line_no: gpiod.LineSettings(direction=gpiod.line.Direction.OUTPUT)
+        }, "power-press")
+        pwm(line, line_no, press_pos, press_time)
+        pwm(line, line_no, idle_pos, 0.2)
+        line.reconfigure_lines(
+            {line_no: gpiod.LineSettings(direction=gpiod.line.Direction.INPUT)}
+        )
         line.release()
 
 if has_rpi:
     servo = servo_rpi
 else:
     servo = servo_gpiod
+
+def servo_pwmchip(chip, idle_pos, press_pos, press_time):
+    idle_pos, press_pos = float(idle_pos), float(press_pos)
+    # This is written for RK3588 SoC, where each pwmchip has just one pwm
+    sysfs_chip = f"/sys/class/pwm/{chip}"
+    sysfs_pwm = f"/sys/class/pwm/{chip}/pwm0"
+    if not os.path.exists(sysfs_pwm):
+        with open(sysfs_chip + "/export", "w") as f:
+            f.write("0\n")
+    with open(sysfs_pwm + "/polarity", "w") as f:
+        f.write("normal\n")
+    with open(sysfs_pwm + "/period", "w") as f:
+        # nonoseconds
+        f.write("20000000\n")
+    with open(sysfs_pwm + "/duty_cycle", "w") as f:
+        f.write("{}\n".format(int(press_pos/100 * 20000000)))
+    with open(sysfs_pwm + "/enable", "w") as f:
+        f.write("1\n")
+    time.sleep(press_time)
+    with open(sysfs_pwm + "/duty_cycle", "w") as f:
+        f.write("{}\n".format(int(idle_pos/100 * 20000000)))
+    time.sleep(0.2)
+    with open(sysfs_pwm + "/duty_cycle", "w") as f:
+        f.write("0\n")
+    time.sleep(0.1)
+    with open(sysfs_pwm + "/enable", "w") as f:
+        f.write("0\n")
+
 
 def switch(pin, idle_state, press_state, press_time):
     pin = int(pin)
@@ -74,7 +105,10 @@ def switch(pin, idle_state, press_state, press_time):
 def press(config_line, press_time):
     button_type, gpio_pin, idle_state, press_state = config_line.split(' ')
     if button_type == 'servo':
-        servo(gpio_pin, idle_state, press_state, press_time)
+        if gpio_pin.startswith("pwmchip"):
+            servo_pwmchip(gpio_pin, idle_state, press_state, press_time)
+        else:
+            servo(gpio_pin, idle_state, press_state, press_time)
     elif button_type == 'switch':
         switch(gpio_pin, idle_state, press_state, press_time)
 
