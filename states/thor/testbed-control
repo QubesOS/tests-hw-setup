@@ -306,9 +306,10 @@ class Testbed:
     def console(self):
         with Lock(f"console-{self.hostid}"):
             console_type = self.config.get("console")
-            if console_type == "hal-picocom-AMA1":
+            if console_type.startswith("hal-picocom-AMA"):
+                dev_suffix = console_type[len("hal-picocom-"):]
                 subprocess.run(["ssh", "-t", f"console@{self.hal_hostname}",
-                                "picocom", "--send-cmd=false", "--receive-cmd=false", "-b", "115200", "/dev/ttyAMA1"])
+                                "picocom", "--send-cmd=false", "--receive-cmd=false", "-b", "115200", "/dev/tty" + dev_suffix])
             elif console_type == "hal-connect-USB0":
                 subprocess.run(["ssh", "-t", f"console@{self.hal_hostname}",
                                 "connect-serial-console", "/dev/ttyUSB0"])

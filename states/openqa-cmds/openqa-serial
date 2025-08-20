@@ -9,12 +9,8 @@ esac
 
 target_settings "$hostid"
 
-if [ "$serial" = "ttyAMA1" ]; then
-    exec picocom -q -b "$serial_speed" /dev/ttyAMA1
-fi
-
-if [ "$serial" = "ttyUSB0" ]; then
-    exec /usr/local/bin/connect-serial-console /dev/ttyUSB0
+if [[ "$serial" = "tty"* ]]; then
+    exec /usr/local/bin/connect-serial-console "/dev/$serial"
 fi
 
 # defaults to tcp
