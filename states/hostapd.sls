@@ -18,7 +18,7 @@ wicked:
 hostapd_service:
   service.running:
     - name: hostapd.service
-    - enable: True
+    - enable: False
 
 /etc/hostapd.conf:
   file.managed:
@@ -41,8 +41,6 @@ dnsmasq:
         dhcp-range=192.168.0.100,192.168.0.100,2m
         listen-address=192.168.0.1
         bind-interfaces
-    - watch_in:
-      - service: dnsmasq_service
 
 /etc/sysconfig/network/ifcfg-wlan0:
   file.managed:
@@ -69,13 +67,6 @@ dnsmasq:
         Restart=always
         RestartSec=3s
     - makedirs: True
-
-dnsmasq_service:
-  service.running:
-    - name: dnsmasq.service
-    - enable: True
-    - require:
-      - cmd: ifup wlan0
 
 # needed for /etc/init.d/boot.local
 systemd-sysvcompat:

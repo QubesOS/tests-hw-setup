@@ -223,6 +223,13 @@ class Testbed:
             subprocess.check_call([
                 "ssh", f"console@{self.hal_hostname}", "boot-menu-interact", "USB"],
                 stdout=subprocess.DEVNULL)
+        elif method == "wifi":
+            if action != "poweron" and action != "poweroff":
+                return
+            subprocess.check_call([
+                "ssh", f"service-control@{self.hal_hostname}", "service-control", "wifi",
+                "start" if action == "poweron" else "stop"],
+                stdout=subprocess.DEVNULL)
         else:
             raise NotImplementedError(f"Unknown power method {method}")
 
@@ -250,11 +257,24 @@ class Testbed:
                 raise PermissionError(f"Testbed {self.hostid} already claimed by {current_claim}")
 
             if claim != "gitlab" and self._has_gitlab():
-                subprocess.run(["ssh", f"service-control@{self.hal_hostname}",
-                                "sudo systemctl stop gitlab-runner.service"])
+                try:
+                    subprocess.run(["ssh", f"service-control@{self.hal_hostname}",
+                                    "service-control gitlab stop"],
+                                   check=True)
+                except subprocess.CalledProcessError as e:
+                    if e.returncode == 127:
+                        subprocess.run(["ssh", f"service-control@{self.hal_hostname}",
+                            "sudo systemctl stop gitlab-runner.service"])
+
             if claim != "openqa":
-                subprocess.run(["ssh", f"service-control@{self.hal_hostname}",
-                                "sudo systemctl stop openqa-worker.target"])
+                try:
+                    subprocess.run(["ssh", f"service-control@{self.hal_hostname}",
+                                    "service-control openqa stop"],
+                                   check=True)
+                except subprocess.CalledProcessError as e:
+                    if e.returncode == 127:
+                        subprocess.run(["ssh", f"service-control@{self.hal_hostname}",
+                            "sudo systemctl stop openqa-worker.target openqa-worker-cacheservice-minion.service"])
 
             with open(claimfile, 'w') as f:
                 f.write(claim)
@@ -267,11 +287,23 @@ class Testbed:
             raise PermissionError(f"Currently in use by {current_claim}, not {claim}")
 
         if claim != "gitlab" and self._has_gitlab():
-            subprocess.run(["ssh", f"service-control@{self.hal_hostname}",
-                            "sudo systemctl start gitlab-runner.service"])
+            try:
+                subprocess.run(["ssh", f"service-control@{self.hal_hostname}",
+                                "service-control gitlab start"],
+                               check=True)
+            except subprocess.CalledProcessError as e:
+                if e.returncode == 127:
+                    subprocess.run(["ssh", f"service-control@{self.hal_hostname}",
+                        "sudo systemctl start gitlab-runner.service"])
         if claim != "openqa":
-            subprocess.run(["ssh", f"service-control@{self.hal_hostname}",
-                            "sudo systemctl start openqa-worker.target openqa-worker-cacheservice-minion.service"])
+            try:
+                subprocess.run(["ssh", f"service-control@{self.hal_hostname}",
+                                "service-control openqa start"],
+                               check=True)
+            except subprocess.CalledProcessError as e:
+                if e.returncode == 127:
+                    subprocess.run(["ssh", f"service-control@{self.hal_hostname}",
+                        "sudo systemctl start openqa-worker.target openqa-worker-cacheservice-minion.service"])
 
         os.remove(claimfile)
 

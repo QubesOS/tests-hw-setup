@@ -1,0 +1,38 @@
+#!/bin/sh
+
+if [ "$EUID" -ne 0 ]; then
+    exec sudo --non-interactive "$0" "$@"
+fi
+
+service="$1"
+action="$2"
+
+if [ "$service" = "openqa" ]; then
+    services="openqa-worker.target"
+    if grep -q ^CACHEDIRECTORY /etc/openqa/workers.ini; then
+        services+=" openqa-worker-cacheservice.service openqa-worker-cacheservice-minion.service"
+    fi
+elif [ "$service" = "gitlab" ]; then
+    services="gitlab-runner.service"
+elif [ "$service" = "wifi" ]; then
+    services="hostapd.service"
+else
+    echo "Invalid service '$service', supported values: openqa, gitlab, wifi" >&2
+    exit 2
+fi
+
+case "$action" in
+    start|stop)
+        systemctl "$action" $services
+        if [ "$service" = "wifi" ]; then
+            if [ "$action" = "start" ]; then
+                ifup wlan0
+            fi
+            systemctl "$action" dnsmasq.service
+        fi
+        ;;
+    *)
+        echo "Usage: $0 start|stop" >&2;
+        exit 2
+        ;;
+esac

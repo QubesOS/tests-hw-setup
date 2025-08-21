@@ -159,8 +159,7 @@ openqa-worker.target:
   service.enabled: []
 
 openqa-worker@{{ hostid }}:
-  service.running:
-    - enable: True
+  service.enabled: []
 
 # mask default openqa-worker@1 to avoid conflicts
 {% if hostid != 1 %}
@@ -192,6 +191,14 @@ openqa-worker-cacheservice-minion:
     - enable: True
     - require:
       - service: openqa-worker-cacheservice
+{% else %}
+openqa-worker-cacheservice:
+  service.disabled: []
+
+openqa-worker-cacheservice-minion:
+  service.disabled:
+    - require:
+      - service: openqa-worker-cacheservice
 {% endif %}
 
 /srv/www/htdocs/qinstall/iso:
@@ -214,6 +221,7 @@ openqa-worker-cacheservice-minion:
         service-control ALL=(root) NOPASSWD: /bin/systemctl start openqa-worker.target openqa-worker-cacheservice-minion.service
         service-control ALL=(root) NOPASSWD: /bin/systemctl start openqa-worker-cacheservice.service, /bin/systemctl start openqa-worker-cacheservice-minion.service
         service-control ALL=(root) NOPASSWD: /usr/sbin/ether-wake
+        service-control ALL=(root) NOPASSWD: /usr/local/bin/service-control
 
 /etc/openqa/hw-control.conf-openqa:
   ini.options_present:
@@ -263,6 +271,11 @@ openqa-worker-user:
 /usr/local/bin/openqa-claim-wrap:
   file.managed:
     - source: salt://files/openqa-claim-wrap
+    - mode: 0755
+
+/usr/local/bin/service-control:
+  file.managed:
+    - source: salt://files/service-control
     - mode: 0755
 
 systemctl daemon-reload:

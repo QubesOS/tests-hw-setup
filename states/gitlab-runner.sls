@@ -121,9 +121,7 @@ gitlab-runner:
    - require:
      - gitlab-repo
      - user: gitlab-runner
-  service.running:
-   - enable: True
-   - restart: True
+  service.enabled:
    - watch:
      - file: /var/lib/gitlab-runner/.gitlab-runner/config.toml
      - file: /etc/systemd/system/gitlab-runner.service
