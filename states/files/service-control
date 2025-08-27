@@ -16,6 +16,8 @@ elif [ "$service" = "gitlab" ]; then
     services="gitlab-runner.service"
 elif [ "$service" = "wifi" ]; then
     services="hostapd.service"
+elif [ "$service" = "vnc" ]; then
+    services="kvmd-otg.service kvmd.service kvmd-vnc.service"
 else
     echo "Invalid service '$service', supported values: openqa, gitlab, wifi" >&2
     exit 2
