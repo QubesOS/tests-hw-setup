@@ -4,8 +4,15 @@ bootmode=normal
 # this is called in the worker dir
 iso="$(jq -r .ISO < vars.json)"
 install_oem="$(jq -r .INSTALL_OEM_STARTUP < vars.json)"
+skip_install="$(jq -r .SKIP_INSTALL < vars.json)"
 # convert "null" or "0" to empty
 if [ "$install_oem" != "1" ]; then install_oem=; fi
+if [ "$skip_install" != "1" ]; then skip_install=; fi
+
+if [ "$skip_install" = 1 ]; then
+    # do not even power on
+    exit 0
+fi
 
 if [ -n "$iso" -a "$iso" != "null" ]; then
     assetdir="$(jq -r .ASSETDIR < vars.json)"

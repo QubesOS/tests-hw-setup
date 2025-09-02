@@ -89,13 +89,56 @@ sync
 EOF
 }
 
+check_snapshot() {
+    snapid="$1"
+
+    ssh_target sh -c 'cat > /tmp/snapshot.sh && bash /tmp/snapshot.sh' <<EOF
+set -euo pipefail
+
+`detect_disks_snippet`
+
+if [ "\$(blkid -p "\$lvmpart" -o value -s TYPE)" = "crypto_LUKS" ]; then
+    cryptsetup open "\$lvmpart" luks <<<"lukspass"
+fi
+
+if ! [ "\$(lvs -o vg_name,name --noheadings --select 'lv_name = "snap-$snapid-root"')" ]; then
+    echo "Snapshot $snapid not found"
+    exit 1
+fi
+
+# check if there is enough free space left for the snapshot to be useful
+while ! vgchange -ay --ignoremonitoring --select 'lv_name = "root-pool"'; do sleep 1; done
+used_percentage=\$(LC_ALL=C lvs -o data_percent --noheadings --select 'lv_name = "root-pool"')
+
+# close LUKS/LVM before exit paths
+vgchange --ignoremonitoring -an
+if [ -e /dev/mapper/luks ]; then
+    for i in 1 2 3 4 5; do
+        sleep 1
+        cryptsetup close luks && break
+        vgchange --ignoremonitoring -an || :
+    done
+fi
+
+# use awk as bash do only integers...
+if ! awk "BEGIN { exit (\$used_percentage > 85) }"; then
+    echo "Snapshot exists, but root pool is \$free_percentage full, doing reinstall anyway"
+    exit 1
+fi
+
+echo "Snapshot ok"
+EOF
+}
+
 #### MAIN START ####
 
 heads="$(jq -r .HEADS < vars.json)"
 usbboot="$(jq -r .USBBOOT < vars.json)"
+confirm_snapshot_or_reinstall="$(jq -r .CONFIRM_SNAPSHOT_OR_REINSTALL < vars.json)"
 # convert "null" or "0" to empty
 [ "$heads" != "1" ] && heads=
 [ "$usbboot" != "1" ] && usbboot=
+[ "$confirm_snapshot_or_reinstall" != "1" ] && confirm_snapshot_or_reinstall=
 
 asset_path="$1"
 
@@ -119,7 +162,7 @@ fi
 # give it some time to boot
 sleep 90
 if ! wait_boot; then
-    if [ -n "$heads" ] && [ -z "$asset_path" ]; then
+    if [ -n "$heads" ] && ( [ -n "$confirm_snapshot_or_reinstall" ] || [ -z "$asset_path" ] ); then
         # The most likely case is Heads waits on a "/dev/sda1 missing" prompt,
         # which means the disk is already wiped. Optimistically assume it is
         # the case. If not, the test will fail later anyway, but with a screen
@@ -149,9 +192,22 @@ if [ -n "$asset_path" ]; then
         exit 1
     fi
     snapid=$(cat "$asset_path")
-    echo "Restoring snapshot $snapid"
-    restore_snapshot "$snapid"
-else
+    if [ -n "$confirm_snapshot_or_reinstall" ]; then
+        echo "Checking if snapshot $snapid exists"
+        if check_snapshot "$snapid"; then
+            echo "Snapshot ok, skipping reinstall"
+            jq '. + { "SKIP_INSTALL": "1" }' < vars.json > vars-new.json
+            mv vars-new.json vars.json
+        else
+            echo "No snapshot, going for reinstall"
+            asset_path=
+        fi
+    else
+        echo "Restoring snapshot $snapid"
+        restore_snapshot "$snapid"
+    fi
+fi
+if [ -z "$asset_path" ]; then
     echo "No disk (snapshot) to restore specified, wiping the whole disk clean"
     # wait for anaconda rescue to stop touching the disk
     sleep 30

@@ -26,9 +26,22 @@ sleep 30
 
 heads="$(jq -r .HEADS < vars.json)"
 usbboot="$(jq -r .USBBOOT < vars.json)"
+skip_install="$(jq -r .SKIP_INSTALL < vars.json)"
 # convert "null" or "0" to empty
 [ "$heads" != "1" ] && heads=
 [ "$usbboot" != "1" ] && usbboot=
+[ "$skip_install" != "1" ] && skip_install=
+
+if [ "$skip_install" = 1 ]; then
+    hdd="$(jq -r .HDD_1 < vars.json)"
+    if [ -n "$hdd" ] && [ -e "$hdd" ]; then
+        if [ "$hdd" != "$asset_path" ]; then
+            cp "$hdd" "$asset_path"
+        fi
+        # do not even power on
+        exit 0
+    fi
+fi
 
 if [ -n "$heads" ] || [ -n "$usbboot" ]; then
     rm -f input-pipe
