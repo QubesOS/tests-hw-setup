@@ -18,6 +18,7 @@ console:
     - contents: |
         KERNEL=="ttyAMA1", OWNER="console", GROUP="_openqa-worker"
         KERNEL=="ttyAMA4", OWNER="console", GROUP="_openqa-worker"
+        KERNEL=="ttyAMA5", OWNER="console", GROUP="_openqa-worker"
         KERNEL=="ttyUSB0", OWNER="console", GROUP="_openqa-worker"
 
 boot-menu-pkgs:
