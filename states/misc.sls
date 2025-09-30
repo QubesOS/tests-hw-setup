@@ -10,3 +10,11 @@
         [Journal]
         SystemMaxUse=300M
     - makedirs: True
+
+monitoring:
+  pkg.installed:
+  - name: golang-github-prometheus-node_exporter
+
+prometheus-node_exporter:
+  service.running:
+  - enable: true
