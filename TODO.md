@@ -24,6 +24,16 @@ ssh root@$host cp /boot/initrd-$kver /boot/vc-manual/initrd.img
 ssh root@$host cp /boot/dtbs/$kver/broadcom/\*.dtb /boot/vc-manual/
 ssh root@$host cp -r /boot/dtbs/$kver/overlays /boot/vc-manual/
 
+kver=6.12.47+
+scp -rp ../pikvm/boot-6.12/* root@$host:/boot/
+rsync -av ../pikvm/modules-6.12/lib/modules/* root@$host:/lib/modules/
+ssh root@$host depmod $kver
+ssh root@$host dracut --kver "$kver" -f
+ssh root@$host cp /boot/Image-$kver /boot/vc-manual/kernel8.img
+ssh root@$host cp /boot/initrd-$kver /boot/vc-manual/initrd.img
+ssh root@$host cp /boot/dtbs/$kver/broadcom/\*.dtb /boot/vc-manual/
+ssh root@$host cp -r /boot/dtbs/$kver/overlays /boot/vc-manual/
+
 ### restore working firmware (obsolete)
 
 scp ../boot-working/*4x* ../boot-working/bootcode.bin root@$host:/boot/vc-manual/
