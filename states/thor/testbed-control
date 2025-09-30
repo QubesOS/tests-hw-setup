@@ -80,18 +80,31 @@ Set to empty to disable KVM on this testbed.
 """
 
 class Lock:
-    def __init__(self, name):
+    def __init__(self, name, owner=None):
         self.path = os.path.join(lockdir, name)
+        self.owner = owner
         self.fd = -1
+
+    @classmethod
+    def get_lock_owner(cls, name):
+        """ Get current lock owner, may raise FileNotFoundError """
+        with open(os.path.join(lockdir, name) + "-owner") as f:
+            return f.read().strip()
+
 
     def __enter__(self):
         assert self.fd == -1
         self.fd = os.open(self.path, os.O_WRONLY | os.O_CREAT)
         fcntl.flock(self.fd, fcntl.LOCK_EX)
+        if self.owner:
+            with open(self.path + "-owner", "w") as f:
+                f.write(self.owner)
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         assert self.fd != -1
+        if self.owner:
+            os.remove(self.path + "-owner")
         os.close(self.fd)
         self.fd = -1
 
@@ -248,7 +261,28 @@ class Testbed:
         if claim not in ["gitlab", "openqa", "manual"]:
             raise ValueError(f"Unsupported claim: {claim}")
 
-        with Lock(f"claim-{self.hostid}"):
+        # resolve deadlock between openqa and gitlab
+        # when openqa is trying to claim the host, but gitlab is starting a job
+        # at the same time too, it may deadlock at taking the "claim" lock:
+        # - openqa (which usually claim the host first) waits for gitlab-runner
+        #   service stop while holding the lock
+        # - gitlab queues the stop event, but continues with the job; the job
+        #   try to claim the host, and as such waits for the lock
+        # when that happens, allow gitlab to claim the host and continue, even
+        # though somebody else is already waiting for the host - gitlab jobs
+        # are only a few minutes long, so it's better this way
+        if claim == 'gitlab':
+            try:
+                lock_owner = Lock.get_lock_owner(f"claim-{self.hostid}")
+                if lock_owner == "openqa":
+                    with open(claimfile, 'w') as f:
+                        f.write(claim)
+                    return
+            except FileNotFoundError:
+                # lock not taken, nothing to resolve
+                pass
+
+        with Lock(f"claim-{self.hostid}", claim):
             current_claim = self.get_current_claim()
             if current_claim == claim:
                 return
