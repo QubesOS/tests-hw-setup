@@ -358,4 +358,24 @@ hdmi-init-edid.service:
   - fstype: nfs4
 {% endif %}
 
+# workaround for https://github.com/QubesOS/qubes-issues/issues/10189
+{% if salt['pillar.get']('openqa:worker:serial', 'tcp') == 'ttyUSB0' %}
+/etc/systemd/system/xhci-dbc-probe.service:
+  file.managed:
+  - contents: |
+      [Unit]
+      Description=Workaround for xhci debug console detection issue
+
+      [Service]
+      Type=simple
+      ExecStart=/bin/sh -c 'while sleep 30; do cat /sys/bus/usb/devices/usb2/2-0:1.0/usb2-port2/disable >/dev/null; done'
+      
+      [Install]
+      WantedBy=multi-user.target
+
+xhci-dbc-probe.service:
+  service.running:
+  - enable: true
+{% endif %}
+
 #FIXME: order openqa after time sync?
