@@ -15,6 +15,13 @@ sshpw --username root --sshkey "{{salt['pillar.get']('openqa:worker:ssh_pubkey',
 
 
 %pre
+disk="{{salt['pillar.get']('openqa:worker:disk_config:disk', '')}}"
+if [ -n "$disk" ]; then
+    wipefs -a "$disk" || :
+fi
+%end
+
+%pre
 ps aux > /tmp/pre.ps
 if grep -q 4.0 /etc/qubes-release; then
     internal=eDP1

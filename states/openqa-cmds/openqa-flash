@@ -142,6 +142,12 @@ confirm_snapshot_or_reinstall="$(jq -r .CONFIRM_SNAPSHOT_OR_REINSTALL < vars.jso
 
 asset_path="$1"
 
+# do not skip wipe on Heads, to save rollback counter
+if [ -z "$asset_path" ] && [ -z "$heads" ]; then
+    echo "Disk will be wiped from kickstart"
+    exit 0
+fi
+
 if [ -n "$heads" ] || [ -n "$usbboot" ]; then
     rm -f input-pipe
     mkfifo input-pipe
@@ -207,6 +213,13 @@ if [ -n "$asset_path" ]; then
         restore_snapshot "$snapid"
     fi
 fi
+
+# do not skip wipe on Heads, to save rollback counter
+if [ -z "$asset_path" ] && [ -z "$heads" ]; then
+    echo "Disk will be wiped from kickstart"
+    exit 0
+fi
+
 if [ -z "$asset_path" ]; then
     echo "No disk (snapshot) to restore specified, wiping the whole disk clean"
     # wait for anaconda rescue to stop touching the disk
