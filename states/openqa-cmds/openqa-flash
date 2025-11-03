@@ -103,12 +103,16 @@ fi
 
 if ! [ "\$(lvs -o vg_name,name --noheadings --select 'lv_name = "snap-$snapid-root"')" ]; then
     echo "Snapshot $snapid not found"
-    exit 1
+    found=
+else
+    found=1
 fi
 
 # check if there is enough free space left for the snapshot to be useful
-while ! vgchange -ay --ignoremonitoring --select 'lv_name = "root-pool"'; do sleep 1; done
-used_percentage=\$(LC_ALL=C lvs -o data_percent --noheadings --select 'lv_name = "root-pool"')
+if [ -n "\$found" ]; then
+    while ! vgchange -ay --ignoremonitoring --select 'lv_name = "root-pool"'; do sleep 1; done
+    used_percentage=\$(LC_ALL=C lvs -o data_percent --noheadings --select 'lv_name = "root-pool"')
+fi
 
 # close LUKS/LVM before exit paths
 vgchange --ignoremonitoring -an
@@ -118,6 +122,11 @@ if [ -e /dev/mapper/luks ]; then
         cryptsetup close luks && break
         vgchange --ignoremonitoring -an || :
     done
+fi
+
+# if not found, exit only now, after closing volumes
+if [ -z "\$found" ]; then
+    exit 1
 fi
 
 # use awk as bash do only integers...
