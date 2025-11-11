@@ -75,6 +75,7 @@ kvmd-deps:
       - python3-netifaces
       - python3-async-lru
       - python3-build
+      - python3-evdev
 
 
 /var/lib/pikvm-sources:
@@ -91,9 +92,11 @@ kvmd-deps:
 https://github.com/meetecho/janus-gateway:
   git.latest:
   - target: /var/lib/pikvm-sources/janus-gateway
-  - branch: 0.14
-  - rev: 99e133bc00cb910186a34b4e2083821cb6c111fc
+  - branch: 0.x
+  - rev: e0536c68cea73d26c026d3f686cbac5f290c3264
   - user: kvmd
+  - force_reset: remote-changes
+  - force_checkout: true
   - require:
     - file: /var/lib/pikvm-sources
 
@@ -182,6 +185,14 @@ janus-make-install:
   - require:
     - file: /usr/local/share/janus/javascript/janus.js-copy
 
+/usr/local/share/janus/javascript/janus.js-iceServers:
+  file.replace:
+  - name: /usr/local/share/janus/javascript/janus.js
+  - pattern: '"iceServers": iceServers'
+  - repl: '"iceServers": (typeof iceServers === "function" ? iceServers() : iceServers)'
+  - require:
+    - file: /usr/local/share/janus/javascript/janus.js-copy
+
 #############
 ### ustreamer
 #############
@@ -190,7 +201,7 @@ https://github.com/pikvm/ustreamer:
   git.latest:
     - target: /var/lib/pikvm-sources/ustreamer
     - branch: master
-    - rev: c848756d53626d2ba462a698777c6f4e32bf100c
+    - rev: 472673ea9067c377f3e6dfde75cd2c58282d0b59
     - user: kvmd
     - force_reset: true
     - require:
@@ -247,7 +258,7 @@ https://github.com/pikvm/kvmd:
   git.latest:
     - target: /var/lib/pikvm-sources/kvmd
     - branch: master
-    - rev: 16a1dbd9ed3ec176a06a331964c337842471f857  # v4.71
+    - rev: 99b9738ccedb200ab9fc95eb0a083401f7251e95  # v4.100
     - force_reset: true
     - user: kvmd
     - require:

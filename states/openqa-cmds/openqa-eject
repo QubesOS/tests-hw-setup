@@ -1,3 +1,7 @@
 #!/bin/sh
 
 ssh -o UserKnownHostsFile=/usr/local/openqa-cmds/thor-known-hosts control@thor normal
+
+echo 'disable_storage' | socat -u - UNIX:/var/run/usb-gadget.sock
+
+exit 0

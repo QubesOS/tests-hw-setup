@@ -86,6 +86,15 @@ class BaseGadget:
         with open(os.path.join(self.gadget_configfs_root, "UDC"), "w") as f:
             f.write("\n")
 
+    def disable_storage(self):
+        if not self.storage_path:
+            return
+        self.disable()
+        for func in (self.gadget_configfs_root / "configs/c.1").iterdir():
+            if func.name.startswith("mass_storage"):
+                func.unlink()
+        self.enable()
+
     def cleanup(self):
         for d in os.listdir(self.gadget_configfs_root / "configs/c.1"):
             if ".usb" in d:
@@ -600,6 +609,10 @@ def parse_and_send_cmd(gadget, line):
     if line == "reconnect":
         gadget.disable()
         gadget.enable()
+        return
+
+    if line == "disable_storage":
+        gadget.disable_storage()
         return
 
     if line.startswith("mouse_"):
