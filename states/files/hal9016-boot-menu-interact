@@ -22,7 +22,7 @@ def interact(client_send, boot_device):
     time.sleep(0.1)
 
     # then go to the latest boot entry and launch it
-    client_send(b"pagedown\n")
+    client_send(b"up\n")
     time.sleep(0.1)
     if boot_device == "OEM":
         # with OEM install, the boot device is next to last
