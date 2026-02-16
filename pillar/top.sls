@@ -42,3 +42,5 @@ base:
     - hal9016
   hal9017:
     - hal9017
+  hal9018:
+    - hal9018
