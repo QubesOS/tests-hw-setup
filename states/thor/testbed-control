@@ -8,12 +8,12 @@ import time
 import logging
 import logging.handlers
 import functools
-import tomllib
+import pathlib
 from textwrap import dedent
 
-import requests
+import tomlkit
 
-configdir = "/etc/testbed"
+configdir = pathlib.Path("/etc/testbed")
 bootconfdir = "/srv/tftp/grub2-efi"
 ipxeconfdir = "/srv/tftp/ipxe"
 lockdir = "/run/testbed-control"
@@ -77,6 +77,27 @@ Default: kvmd-otg.service kvmd.service kvmd-vnc.service
 
 Set to empty to disable KVM on this testbed.
 
+User config format
+==================
+
+TOML
+
+Config options
+--------------
+
+### allowed-targets
+
+Array of allowed hosts (just numbers). Or a special value "all".
+
+### default-target
+
+Default target host. Can be also set by the user.
+
+### ci-user
+
+Is it a special user for gitlab/openqa? When set to true, claim:gitlab and
+claim:openqa commands are allowed.
+
 """
 
 class Lock:
@@ -117,6 +138,49 @@ class Lock:
         return wrapper
 
 
+class User:
+    def __init__(self, name):
+        self.name = name
+        self.config = {}
+        try:
+            self.load_config()
+        except FileNotFoundError:
+            raise KeyError(f"No such user: {name}")
+
+        self.log = logging.getLogger(f"user.{self.name}")
+
+    def __str__(self):
+        return self.name
+
+    def load_config(self):
+        configpath = os.path.join(configdir, "users", f"{self.name}.conf")
+        with open(configpath, "rb") as f:
+            self.config = tomlkit.load(f)
+
+    def get_default_target(self):
+        if "default-target" not in self.config:
+            return None
+        return int(self.config.get("default-target"))
+
+    def set_default_target(self, target):
+        self.config["default-target"] = target
+        configpath = os.path.join(configdir, "users", f"{self.name}.conf")
+        with open(configpath, "w") as f:
+            tomlkit.dump(self.config, f)
+
+    def check_target_access(self, target):
+        allowed_targets = self.config.get("allowed-targets", "")
+        if allowed_targets == "all":
+            return True
+        return target in allowed_targets
+
+    def is_ci_user(self):
+        return bool(self.config.get("ci-user", False))
+
+    def get_user_ssh_keys(self):
+        return self.config.get("ssh-keys", [])
+
+
 class Testbed:
     def __init__(self, hostid):
         self.hostid = hostid
@@ -129,8 +193,8 @@ class Testbed:
 
     def load_config(self):
         configpath = os.path.join(configdir, "hosts", f"{self.hostid}.conf")
-        with open(configpath, "rb") as f:
-            self.config = tomllib.load(f)
+        with open(configpath, "r") as f:
+            self.config = tomlkit.load(f)
 
     def get_current_mode(self):
         bootfile = os.path.join(bootconfdir, f"testbed{self.hostid}-default")
@@ -190,6 +254,8 @@ class Testbed:
             action_opt = "-o" if action == "poweron" else "-f"
             subprocess.check_call(["sispmctl", "-D", devid, action_opt, socket])
         elif method == "shelly":
+            # keep this import scope small, it takes 400ms+ to import it
+            import requests
             if action not in ("poweron", "poweroff"):
                 return
             ip, port = args[0:2]
@@ -227,7 +293,7 @@ class Testbed:
                 (method == "hal-poweron-button" and action != "poweron")
             ):
                 return
-            time.sleep(3)
+            time.sleep(4)
             subprocess.check_call([
                 "ssh", f"control@{self.hal_hostname}", "power"])
         elif method == "boot-menu":
@@ -256,10 +322,27 @@ class Testbed:
                 return f.readline().strip()
         return None
 
-    def claim(self, claim):
-        claimfile = os.path.join(bootconfdir, f"testbed{self.hostid}-claim")
+    def check_claim(self, user: User):
+        """Check if the host is claimed by given user"""
+        current_claim = self.get_current_claim()
+        if not current_claim:
+            return False
+        return str(user) == current_claim.split(":")[0]
+
+    def _normalize_claim(self, user: User, claim) -> str:
         if claim not in ["gitlab", "openqa", "manual"]:
             raise ValueError(f"Unsupported claim: {claim}")
+        if claim in ["gitlab", "openqa"]:
+            if not user or not user.is_ci_user():
+                raise ValueError(f"User {user} is not a CI user")
+            claim = f"{user}:{claim}"
+        else:
+            claim = str(user or claim)
+        return claim
+
+    def claim(self, user: User, claim):
+        claimfile = os.path.join(bootconfdir, f"testbed{self.hostid}-claim")
+        claim = self._normalize_claim(user, claim)
 
         # resolve deadlock between openqa and gitlab
         # when openqa is trying to claim the host, but gitlab is starting a job
@@ -271,10 +354,10 @@ class Testbed:
         # when that happens, allow gitlab to claim the host and continue, even
         # though somebody else is already waiting for the host - gitlab jobs
         # are only a few minutes long, so it's better this way
-        if claim == 'gitlab':
+        if claim.endswith(':gitlab'):
             try:
                 lock_owner = Lock.get_lock_owner(f"claim-{self.hostid}")
-                if lock_owner == "openqa":
+                if lock_owner.endswith(":openqa"):
                     with open(claimfile, 'w') as f:
                         f.write(claim)
                     return
@@ -290,7 +373,7 @@ class Testbed:
             if current_claim:
                 raise PermissionError(f"Testbed {self.hostid} already claimed by {current_claim}")
 
-            if claim != "gitlab" and self._has_gitlab():
+            if not claim.endswith(":gitlab") and self._has_gitlab():
                 try:
                     subprocess.run(["ssh", f"service-control@{self.hal_hostname}",
                                     "service-control gitlab stop"],
@@ -300,7 +383,7 @@ class Testbed:
                         subprocess.run(["ssh", f"service-control@{self.hal_hostname}",
                             "sudo systemctl stop gitlab-runner.service"])
 
-            if claim != "openqa":
+            if not claim.endswith(":openqa"):
                 try:
                     subprocess.run(["ssh", f"service-control@{self.hal_hostname}",
                                     "service-control openqa stop"],
@@ -313,14 +396,15 @@ class Testbed:
             with open(claimfile, 'w') as f:
                 f.write(claim)
 
-    def release(self, claim):
+    def release(self, user: User | None, claim):
         claimfile = os.path.join(bootconfdir, f"testbed{self.hostid}-claim")
+        claim = self._normalize_claim(user, claim)
         current_claim = self.get_current_claim()
 
         if current_claim != claim:
             raise PermissionError(f"Currently in use by {current_claim}, not {claim}")
 
-        if claim != "gitlab" and self._has_gitlab():
+        if not claim.endswith(":gitlab") and self._has_gitlab():
             try:
                 subprocess.run(["ssh", f"service-control@{self.hal_hostname}",
                                 "service-control gitlab start"],
@@ -329,7 +413,7 @@ class Testbed:
                 if e.returncode == 127:
                     subprocess.run(["ssh", f"service-control@{self.hal_hostname}",
                         "sudo systemctl start gitlab-runner.service"])
-        if claim != "openqa":
+        if not claim.endswith(":openqa"):
             try:
                 subprocess.run(["ssh", f"service-control@{self.hal_hostname}",
                                 "service-control openqa start"],
@@ -423,6 +507,13 @@ class Testbed:
             if key_file.startswith("dropbear_") and key_file.endswith("_host_key"):
                 subprocess.run(["dropbearkey", "-y", "-f", os.path.join(rescuedir, "initrd", "main", "etc", "dropbear", key_file)])
 
+    def get_selected_ssh_keys(self) -> str:
+        claim = self.get_current_claim()
+        if not claim:
+            return ""
+        user = User(claim.split(":")[0])
+        return "\n".join(user.get_user_ssh_keys())
+
 
 def cmd_status(testbed):
     status_msg = f"""
@@ -435,9 +526,13 @@ def cmd_status(testbed):
 
 def cmd_help(testbed):
     help_msg = """\
+    First command may be a number - to select which host to operate on.
+
     Ownership commands:
-      claim:NAME    - claim the machine for given service (gitlab, openqa, manual)
-      release:NAME  - release claimed machine - name must match the current claim
+      claim         - claim the machine for manual use
+      claim:NAME    - claim the machine for given CI service (gitlab, openqa)
+      release       - release claimed machine
+      release:NAME  - release CI-claimed machine - name must match the current claim
 
     Boot commands (switches only on next boot):
       rescue     - rescue system (doesn't load anything from the disk)
@@ -455,6 +550,7 @@ def cmd_help(testbed):
 
     Connection commands:
       status     - print target status
+      set-default - set the currently selected target host as default
       hostkey    - print SSH hostkey used by the rescue system
       console    - get serial console (if available)
       vnc:start  - start VNC proxy for HDMI with USB keyboard/mouse input; do not use when openqa is running
@@ -470,16 +566,55 @@ def setup_logging():
     logging.root.addHandler(ha_syslog)
     logging.root.setLevel("INFO")
 
+def get_control_ssh_keys():
+    self_path = __file__
+    for user_conf in (configdir / "users").glob("*.conf"):
+        user = User(user_conf.with_suffix("").name)
+        for key in user.get_user_ssh_keys():
+            yield f'restrict,pty,command="sudo {self_path} {user.name} ssh" {key}'
+
 def main():
     setup_logging()
     if len(sys.argv) < 2:
         print("Usage: testbed-control hostid commands...", file=sys.stderr)
+        print("Usage: testbed-control username ssh", file=sys.stderr)
+        print("Usage: testbed-control get-control-keys", file=sys.stderr)
         sys.exit(1)
 
+    if len(sys.argv) == 2 and sys.argv[1] == "get-control-keys":
+        print("\n".join(get_control_ssh_keys()))
+        return
+
+    if len(sys.argv) > 2 and sys.argv[2] == "ssh":
+        commands = os.environ.get("SSH_ORIGINAL_COMMAND", "").split()
+        username = sys.argv[1]
+        try:
+            user = User(username)
+        except KeyError:
+            print(f"No such user: {username}", file=sys.stderr)
+            sys.exit(1)
+    else:
+        commands = sys.argv[1:]
+        user = None
+        username = None
+
+    target = None
     try:
-        target = int(sys.argv[1])
-    except ValueError:
-        print(f"Invalid target {sys.argv[1]}, must be a number!", file=sys.stderr)
+        target = int(commands[0])
+        commands = commands[1:]
+    except (ValueError, IndexError):
+        if user is not None:
+            target = user.get_default_target()
+        else:
+            print(f"Invalid target {sys.argv[1]}, must be a number!", file=sys.stderr)
+            sys.exit(1)
+
+    if target is None:
+        print(f"No target provided and no default for user {username}!", file=sys.stderr)
+        sys.exit(1)
+
+    if user and not user.check_target_access(target):
+        print(f"User {username} has no access to target {target}!", file=sys.stderr)
         sys.exit(1)
 
     try:
@@ -488,20 +623,25 @@ def main():
         print(f"No such host: {target}!", file=sys.stderr)
         sys.exit(1)
 
-    if len(sys.argv) > 2 and sys.argv[2] == "ssh":
-        commands = os.environ.get("SSH_ORIGINAL_COMMAND", "").split()
-    else:
-        commands = sys.argv[2:]
-
     if not commands:
         cmd_help(testbed)
 
     for cmd in commands:
         testbed.log.info("command: %s", cmd)
+        # verify if target is claimed by this user
+        if cmd not in ["help", "status", "claim", "set-default"] \
+                and not cmd.startswith("claim:"):
+            if user and not testbed.check_claim(user):
+                print(f"Target {target} not claimed by user {user}!", file=sys.stderr)
+                sys.exit(1)
         if cmd == "help":
             cmd_help(testbed)
         elif cmd == "status":
             cmd_status(testbed)
+        elif cmd == "set-default":
+            user.set_default_target(target)
+        elif cmd == "print-target-ssh-keys":
+            print("\n".join(testbed.get_selected_ssh_keys()))
         elif cmd == "reset":
             testbed.reset()
         elif cmd == "poweron":
@@ -526,10 +666,14 @@ def main():
             testbed.wake()
         elif cmd == "console":
             testbed.console()
+        elif cmd == "claim":
+            testbed.claim(user, "manual")
+        elif cmd == "release":
+            testbed.release(user, "manual")
         elif cmd.startswith("claim:"):
-            testbed.claim(cmd.split(":")[1])
+            testbed.claim(user, cmd.split(":")[1])
         elif cmd.startswith("release:"):
-            testbed.release(cmd.split(":")[1])
+            testbed.release(user, cmd.split(":")[1])
         elif cmd == "vnc:start":
             testbed.vncstart()
         elif cmd == "vnc:stop":
