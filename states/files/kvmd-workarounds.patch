@@ -1,3 +1,16 @@
+diff --git a/kvmd/apps/otg/__init__.py b/kvmd/apps/otg/__init__.py
+index 670c03c1..17580be3 100644
+--- a/kvmd/apps/otg/__init__.py
++++ b/kvmd/apps/otg/__init__.py
+@@ -210,7 +210,7 @@ class _GadgetConfig:
+         _write(join(func_path, "lun.0/ro"), int(not rw))
+         _write(join(func_path, "lun.0/removable"), int(removable))
+         _write(join(func_path, "lun.0/nofua"), int(not fua))
+-        _write(join(func_path, "lun.0/inquiry_string_cdrom"), inquiry_string_cdrom)
++        #_write(join(func_path, "lun.0/inquiry_string_cdrom"), inquiry_string_cdrom)
+         _write(join(func_path, "lun.0/inquiry_string"), inquiry_string_flash)
+         if user != "root":
+             _chown(join(func_path, "lun.0/cdrom"), user)
 diff --git a/kvmd/helpers/remount/__init__.py b/kvmd/helpers/remount/__init__.py
 index 1738a90e..fe0e579c 100644
 --- a/kvmd/helpers/remount/__init__.py
