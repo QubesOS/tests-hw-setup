@@ -51,5 +51,25 @@ move-boot:
     - require:
       - cmd: move-boot
 
+/etc/systemd/system/drop-caches.service:
+  file.managed:
+  - contents: |
+      [Service]
+      ExecStart=/bin/sh -c 'echo 3 > /proc/sys/vm/drop_caches'
+      Type=oneshot
+
+/etc/systemd/system/drop-caches.timer:
+  file.managed:
+  - contents: |
+      [Timer]
+      OnCalendar=daily
+
+      [Install]
+      WantedBy=timers.target
+
+drop-caches.timer:
+  service.running:
+  - enable: True
+
 #TODO:
 # - kernel
