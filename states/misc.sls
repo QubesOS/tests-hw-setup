@@ -13,8 +13,12 @@
 
 monitoring:
   pkg.installed:
-  - name: golang-github-prometheus-node_exporter
+  - name: {{ salt['pillar.get']('pkg-names:prometheus-node-exporter') }}
 
-prometheus-node_exporter:
+{{ salt['pillar.get']('service-names:prometheus-node-exporter') }}:
   service.running:
   - enable: true
+
+# ether-wake no longer installed by default (was part of net-tools?)
+{{ salt['pillar.get']('pkg-names:ether-wake') }}:
+  pkg.installed: []
