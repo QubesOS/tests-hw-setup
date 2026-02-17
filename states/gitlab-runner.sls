@@ -6,6 +6,11 @@
     - source: https://packages.gitlab.com/runner/gitlab-runner/gpgkey/runner-gitlab-runner-4C80FB51394521E9.pub.gpg
     - source_hash: 1594eb7695ec8fff6b96646913abea3fd42a48e6fe7313c97ea8959a34d53329
 
+/etc/pki/RPM-GPG-gitlab-runner-49F16C5CC3A0F81F:
+  file.managed:
+    - source: https://packages.gitlab.com/runner/gitlab-runner/gpgkey/runner-gitlab-runner-49F16C5CC3A0F81F.pub.gpg
+    - source_hash: d109099f78cf12914cd4c6bc9733948f8c5da8bab7b9d6803f2f76ea32f21664
+
 /etc/pki/RPM-GPG-gitlab-runner-repo:
   file.managed:
     #- source: https://packages.gitlab.com/runner/gitlab-runner/gpgkey
@@ -16,14 +21,15 @@ gitlab-repo:
   file.managed:
     - name: /etc/zypp/repos.d/gitlab-runner.repo
     - contents: |
-        # no dedicated opensuse package right now, use f36 instead
+        # no dedicated opensuse package right now, use f43 instead
         [runner_gitlab-runner]
         name=runner_gitlab-runner
-        baseurl=https://packages.gitlab.com/runner/gitlab-runner/fedora/36/$basearch
+        baseurl=https://packages.gitlab.com/runner/gitlab-runner/fedora/43/$basearch
         repo_gpgcheck=1
         gpgcheck=1
         enabled=1
         gpgkey=file:///etc/pki/RPM-GPG-gitlab-runner
+               file:///etc/pki/RPM-GPG-gitlab-runner-49F16C5CC3A0F81F
                file:///etc/pki/RPM-GPG-gitlab-runner-repo
         sslverify=1
         sslcacert=/etc/pki/tls/certs/ca-bundle.crt
