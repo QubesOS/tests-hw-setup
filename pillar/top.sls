@@ -3,9 +3,9 @@ base:
     - distro-suse
   'G@os:Debian':
     - distro-debian
-  # actual pillar files referenced below are intentionally not pushed to git
   '*':
     - hal-common
+  # actual pillar files referenced below are intentionally not pushed to git
   thor:
     - thor
   hal9001:
@@ -44,3 +44,5 @@ base:
     - hal9017
   hal9018:
     - hal9018
+  hal9019:
+    - hal9019
