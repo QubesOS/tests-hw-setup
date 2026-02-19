@@ -130,12 +130,12 @@ if [ -z "\$found" ]; then
 fi
 
 # use awk as bash do only integers...
-if ! awk "BEGIN { exit (\$used_percentage > 85) }"; then
-    echo "Snapshot exists, but root pool is \$free_percentage full, doing reinstall anyway"
+if ! awk "BEGIN { exit (\$used_percentage > 75) }"; then
+    echo "Snapshot exists, but root pool is \${used_percentage}% full, doing reinstall anyway"
     exit 1
 fi
 
-echo "Snapshot ok"
+echo "Snapshot ok, root pool is \${used_percentage}% full"
 EOF
 }
 
