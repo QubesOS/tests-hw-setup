@@ -16,10 +16,11 @@ console:
 /etc/udev/rules.d/90-console-access.rules:
   file.managed:
     - contents: |
-        KERNEL=="ttyAMA1", OWNER="console", GROUP="_openqa-worker"
-        KERNEL=="ttyAMA4", OWNER="console", GROUP="_openqa-worker"
-        KERNEL=="ttyAMA5", OWNER="console", GROUP="_openqa-worker"
-        KERNEL=="ttyUSB0", OWNER="console", GROUP="_openqa-worker"
+        # workaround https://github.com/systemd/systemd/issues/39056
+        ACTION=="add", KERNEL=="ttyAMA1", RUN+="/bin/chown console:_openqa-worker %N"
+        ACTION=="add", KERNEL=="ttyAMA4", RUN+="/bin/chown console:_openqa-worker %N"
+        ACTION=="add", KERNEL=="ttyAMA5", RUN+="/bin/chown console:_openqa-worker %N"
+        ACTION=="add", KERNEL=="ttyUSB0", RUN+="/bin/chown console:_openqa-worker %N"
 
 boot-menu-pkgs:
   pkg.installed:
