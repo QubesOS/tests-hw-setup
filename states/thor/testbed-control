@@ -98,6 +98,12 @@ Default target host. Can be also set by the user.
 Is it a special user for gitlab/openqa? When set to true, claim:gitlab and
 claim:openqa commands are allowed.
 
+### admin
+
+Gives a bunch of admin access.
+Can suffix target with ":force" to access target claimed by other user
+(including issuing release command then).
+
 """
 
 class Lock:
@@ -176,6 +182,9 @@ class User:
 
     def is_ci_user(self):
         return bool(self.config.get("ci-user", False))
+
+    def is_admin(self):
+        return bool(self.config.get("admin", False))
 
     def get_user_ssh_keys(self):
         return self.config.get("ssh-keys", [])
@@ -340,7 +349,7 @@ class Testbed:
             claim = str(user or claim)
         return claim
 
-    def claim(self, user: User, claim):
+    def claim(self, user: User, claim, force: bool = False):
         claimfile = os.path.join(bootconfdir, f"testbed{self.hostid}-claim")
         claim = self._normalize_claim(user, claim)
 
@@ -370,8 +379,10 @@ class Testbed:
             if current_claim == claim:
                 return
 
-            if current_claim:
-                raise PermissionError(f"Testbed {self.hostid} already claimed by {current_claim}")
+            if current_claim and not force:
+                raise PermissionError(
+                    f"Testbed {self.hostid} already claimed by {current_claim}"
+                )
 
             if not claim.endswith(":gitlab") and self._has_gitlab():
                 try:
@@ -396,12 +407,12 @@ class Testbed:
             with open(claimfile, 'w') as f:
                 f.write(claim)
 
-    def release(self, user: User | None, claim):
+    def release(self, user: User | None, claim, force: bool = False):
         claimfile = os.path.join(bootconfdir, f"testbed{self.hostid}-claim")
         claim = self._normalize_claim(user, claim)
         current_claim = self.get_current_claim()
 
-        if current_claim != claim:
+        if current_claim != claim and not force:
             raise PermissionError(f"Currently in use by {current_claim}, not {claim}")
 
         if not claim.endswith(":gitlab") and self._has_gitlab():
@@ -599,8 +610,12 @@ def main():
         username = None
 
     target = None
+    target_options = ""
     try:
-        target = int(commands[0])
+        target_str = commands[0]
+        if ":" in target_str:
+            target_str, target_options = commands[0].split(":", 1)
+        target = int(target_str)
         commands = commands[1:]
     except (ValueError, IndexError):
         if user is not None:
@@ -632,8 +647,11 @@ def main():
         if cmd not in ["help", "status", "claim", "set-default"] \
                 and not cmd.startswith("claim:"):
             if user and not testbed.check_claim(user):
-                print(f"Target {target} not claimed by user {user}!", file=sys.stderr)
-                sys.exit(1)
+                if target_options == "force" and user.is_admin():
+                    print(f"Using admin powers to access {target} !", file=sys.stderr)
+                else:
+                    print(f"Target {target} not claimed by user {user}!", file=sys.stderr)
+                    sys.exit(1)
         if cmd == "help":
             cmd_help(testbed)
         elif cmd == "status":
@@ -667,9 +685,9 @@ def main():
         elif cmd == "console":
             testbed.console()
         elif cmd == "claim":
-            testbed.claim(user, "manual")
+            testbed.claim(user, "manual", force=target_options == "force")
         elif cmd == "release":
-            testbed.release(user, "manual")
+            testbed.release(user, "manual", force=target_options == "force")
         elif cmd.startswith("claim:"):
             testbed.claim(user, cmd.split(":")[1])
         elif cmd.startswith("release:"):
