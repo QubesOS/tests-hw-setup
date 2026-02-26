@@ -189,6 +189,14 @@ class User:
     def get_user_ssh_keys(self):
         return self.config.get("ssh-keys", [])
 
+    def get_allowed_targets(self):
+        allowed_targets = self.config.get("allowed-targets", "")
+        if allowed_targets == "all":
+            for conf in (configdir / "hosts").glob("*.conf"):
+                yield int(conf.with_suffix("").name)
+        else:
+            yield from allowed_targets
+
 
 class Testbed:
     def __init__(self, hostid):
@@ -586,6 +594,16 @@ def cmd_status(testbed):
       Currently in use by: {testbed.get_current_claim()}"""
     print(dedent(status_msg))
 
+def cmd_status_all(user: User, current: Testbed):
+    fmt = "{current}{hostid:<5}{claim:<15}{bootmode:<15}"
+    print(fmt.format(current=" ", hostid="Host", claim="User", bootmode="Bootmode"))
+    for target in sorted(user.get_allowed_targets()):
+        testbed = Testbed(target)
+        print(fmt.format(
+            current=("*" if current.hostid == target else " "),
+            hostid=target,
+            claim=testbed.get_current_claim() or "",
+            bootmode=testbed.get_current_mode() or ""))
 
 def cmd_help(testbed):
     help_msg = """\
@@ -613,6 +631,7 @@ def cmd_help(testbed):
 
     Connection commands:
       status     - print target status
+      status-all - print status of all allowed targets
       set-default - set the currently selected target host as default
       hostkey    - print SSH hostkey used by the rescue system
       console    - get serial console (if available)
@@ -699,7 +718,7 @@ def main():
     for cmd in commands:
         testbed.log.info("command: %s", cmd)
         # verify if target is claimed by this user
-        if cmd not in ["help", "status", "claim", "set-default"] \
+        if cmd not in ["help", "status", "status-all", "claim", "set-default"] \
                 and not cmd.startswith("claim:"):
             if user and not testbed.check_claim(user):
                 if target_options == "force" and user.is_admin():
@@ -711,6 +730,8 @@ def main():
             cmd_help(testbed)
         elif cmd == "status":
             cmd_status(testbed)
+        elif cmd == "status-all":
+            cmd_status_all(user, testbed)
         elif cmd == "set-default":
             user.set_default_target(target)
         elif cmd == "print-target-ssh-keys":
