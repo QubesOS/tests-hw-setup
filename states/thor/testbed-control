@@ -499,6 +499,58 @@ class Testbed:
         subprocess.run(["ssh", f"service-control@{self.hal_hostname}",
                         "sudo", "systemctl", "stop", *kvm_services])
 
+    def _inject_ssh_target(self, command_prefix: list[str], path_prefix: str, user: User):
+        try:
+            with subprocess.Popen(
+                    command_prefix + ["tee", "-a", f"{path_prefix}/root/.ssh/authorized_keys"],
+                    stdin=subprocess.PIPE, stdout=subprocess.DEVNULL) as proc:
+                for key in user.get_user_ssh_keys():
+                    proc.stdin.write(f"{key}\n".encode())
+            subprocess.run(command_prefix + ["mkdir", "-p", f"{path_prefix}/home/user/.ssh"],
+                           check=True)
+            with subprocess.Popen(command_prefix + ["tee", "-a",
+                                                    f"{path_prefix}/home/user/.ssh/authorized_keys"],
+                                  stdin=subprocess.PIPE, stdout=subprocess.DEVNULL) as proc:
+                for key in user.get_user_ssh_keys():
+                    proc.stdin.write(f"{key}\n".encode())
+            subprocess.run(
+                command_prefix + ["chown", "-R", "user:user", f"{path_prefix}/home/user/.ssh"],
+                check=True)
+        except subprocess.CalledProcessError as e:
+            print(f"Failed to inject SSH key, command {e.cmd} failed")
+            sys.exit(1)
+
+    def inject_ssh(self, user: User):
+        command_prefix = [
+            "ssh",
+            "-o", "UserKnownHostsFile=/dev/null",
+            "-o", "StrictHostKeyChecking=no",
+            "-o", "LogLevel=error",
+            f"root@test-{self.hostid}.testnet",
+        ]
+        # check if it's running qubes system, or rescue one
+        proc = subprocess.run(command_prefix + ["test", "-S", "/run/qubesd.sock"])
+        if proc.returncode == 0:
+            # it's qubes, insert pubkey directly
+            self._inject_ssh_target(command_prefix, "", user)
+        else:
+            # it's rescue, mount the disk first
+            script_open = [
+                "dev=$(blkid -t TYPE=crypto_LUKS -o device)",
+                "cryptsetup open luks $dev <<<'lukspass'",
+                "lvchange -ay qubes_dom0/root",
+                "mkdir -p /mnt/sysimage-ssh",
+                "mount /dev/qubes_dom0/root /mnt/sysimage=ssh",
+            ]
+            subprocess.run(command_prefix + [" && ".join(script_open)], check=True)
+            self._inject_ssh_target(command_prefix, "/mnt/sysimage-ssh", user)
+            script_close = [
+                "umount /mnt/sysimage-ssh"
+                "vgchange -an",
+                "cryptsetup close luks",
+            ]
+            subprocess.run(command_prefix + [" && ".join(script_close)], check=True)
+
     def hostkey(self):
         # TODO: change print to logging?
         img_path = os.path.join(rescuedir, "initrd.img")
@@ -564,8 +616,11 @@ def cmd_help(testbed):
       set-default - set the currently selected target host as default
       hostkey    - print SSH hostkey used by the rescue system
       console    - get serial console (if available)
-      vnc:start  - start VNC proxy for HDMI with USB keyboard/mouse input; do not use when openqa is running
-      vnc:stop   - stop VNC proxy"""
+      vnc:start  - start VNC proxy for HDMI with USB keyboard/mouse input;
+                   do not use when openqa is running
+      vnc:stop   - stop VNC proxy
+      inject-ssh - inject user's SSH keys into running system installed by CI;
+                   requires system already started in 'normal' or 'rescue' mode"""
     print(dedent(help_msg))
     cmd_status(testbed)
     sys.exit(0)
@@ -684,6 +739,8 @@ def main():
             testbed.wake()
         elif cmd == "console":
             testbed.console()
+        elif cmd == "inject-ssh":
+            testbed.inject_ssh(user)
         elif cmd == "claim":
             testbed.claim(user, "manual", force=target_options == "force")
         elif cmd == "release":
