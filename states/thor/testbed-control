@@ -114,10 +114,9 @@ class Lock:
 
     @classmethod
     def get_lock_owner(cls, name):
-        """ Get current lock owner, may raise FileNotFoundError """
+        """Get current lock owner, may raise FileNotFoundError"""
         with open(os.path.join(lockdir, name) + "-owner") as f:
             return f.read().strip()
-
 
     def __enter__(self):
         assert self.fd == -1
@@ -141,6 +140,7 @@ class Lock:
         def wrapper(*args, **kwargs):
             with self:
                 return func(*args, **kwargs)
+
         return wrapper
 
 
@@ -223,13 +223,23 @@ class Testbed:
     def _send_bootfiles(self, mode):
         print(f"Sending boot files for target {self.hostid}")
         if mode == "normal":
-            subprocess.run(["ssh", f"customboot@{self.hal_hostname}", "customboot-build"],
-                stdin=subprocess.DEVNULL)
+            subprocess.run(
+                ["ssh", f"customboot@{self.hal_hostname}", "customboot-build"],
+                stdin=subprocess.DEVNULL,
+            )
         elif mode == "custom":
-            with subprocess.Popen(["tar", "c", "-C", f"/srv/tftp/test{self.hostid}", "."],
-                    stdout=subprocess.PIPE) as p:
-                subprocess.run(["ssh", f"customboot@{self.hal_hostname}", "customboot-build"],
-                    stdin=p.stdout)
+            with subprocess.Popen(
+                ["tar", "c", "-C", f"/srv/tftp/test{self.hostid}", "."],
+                stdout=subprocess.PIPE,
+            ) as p:
+                subprocess.run(
+                    [
+                        "ssh",
+                        f"customboot@{self.hal_hostname}",
+                        "customboot-build",
+                    ],
+                    stdin=p.stdout,
+                )
 
     def _update_stripes(self, mode):
         subprocess.run(["stripes", str(self.hostid), mode])
@@ -246,14 +256,15 @@ class Testbed:
             os.remove(f"{bootconfdir}/testbed{self.hostid}-default")
         except FileNotFoundError:
             pass
-        os.symlink(f"env-boot-{mode}",
-            f"{bootconfdir}/testbed{self.hostid}-default")
+        os.symlink(f"env-boot-{mode}", f"{bootconfdir}/testbed{self.hostid}-default")
         try:
             os.remove(f"{ipxeconfdir}/testbed{self.hostid}-default.ipxe")
         except FileNotFoundError:
             pass
-        os.symlink(f"env-boot-{mode}",
-            f"{ipxeconfdir}/testbed{self.hostid}-default.ipxe")
+        os.symlink(
+            f"env-boot-{mode}",
+            f"{ipxeconfdir}/testbed{self.hostid}-default.ipxe",
+        )
         print("done")
 
         if self.config.get("send-bootfiles", False):
@@ -273,20 +284,22 @@ class Testbed:
         elif method == "shelly":
             # keep this import scope small, it takes 400ms+ to import it
             import requests
+
             if action not in ("poweron", "poweroff"):
                 return
             ip, port = args[0:2]
             auth = None
             if len(args) > 2:
-                auth = requests.auth.HTTPDigestAuth('admin', args[2])
-            r = requests.post(f"http://{ip}:{port}/rpc", auth=auth, json={
-                "id": 0,
-                "method": "Switch.Set",
-                "params": {
-                    "id":0,
-                    "on": action != "poweroff"
-                }
-            })
+                auth = requests.auth.HTTPDigestAuth("admin", args[2])
+            r = requests.post(
+                f"http://{ip}:{port}/rpc",
+                auth=auth,
+                json={
+                    "id": 0,
+                    "method": "Switch.Set",
+                    "params": {"id": 0, "on": action != "poweroff"},
+                },
+            )
             r.raise_for_status()
         elif method == "wol":
             if action == "poweroff":
@@ -301,31 +314,51 @@ class Testbed:
             time.sleep(3)
             iface, *mac = args
             mac = ":".join(mac)
-            subprocess.check_call([
-                "ssh", f"service-control@{self.hal_hostname}",
-                "sudo", "ether-wake", "-i", iface, mac])
+            subprocess.check_call(
+                [
+                    "ssh",
+                    f"service-control@{self.hal_hostname}",
+                    "sudo",
+                    "ether-wake",
+                    "-i",
+                    iface,
+                    mac,
+                ]
+            )
         elif method in ("hal-button", "hal-wake-button", "hal-poweron-button"):
-            if (action == "poweroff" or
-                (method == "hal-wake-button" and action != "wake") or
-                (method == "hal-poweron-button" and action != "poweron")
+            if (
+                action == "poweroff"
+                or (method == "hal-wake-button" and action != "wake")
+                or (method == "hal-poweron-button" and action != "poweron")
             ):
                 return
             time.sleep(4)
-            subprocess.check_call([
-                "ssh", f"control@{self.hal_hostname}", "power"])
+            subprocess.check_call(["ssh", f"control@{self.hal_hostname}", "power"])
         elif method == "boot-menu":
             if action != "poweron" or self.get_current_mode() != "custom":
                 return
-            subprocess.check_call([
-                "ssh", f"console@{self.hal_hostname}", "boot-menu-interact", "USB"],
-                stdout=subprocess.DEVNULL)
+            subprocess.check_call(
+                [
+                    "ssh",
+                    f"console@{self.hal_hostname}",
+                    "boot-menu-interact",
+                    "USB",
+                ],
+                stdout=subprocess.DEVNULL,
+            )
         elif method == "wifi":
             if action != "poweron" and action != "poweroff":
                 return
-            subprocess.check_call([
-                "ssh", f"service-control@{self.hal_hostname}", "service-control", "wifi",
-                "start" if action == "poweron" else "stop"],
-                stdout=subprocess.DEVNULL)
+            subprocess.check_call(
+                [
+                    "ssh",
+                    f"service-control@{self.hal_hostname}",
+                    "service-control",
+                    "wifi",
+                    "start" if action == "poweron" else "stop",
+                ],
+                stdout=subprocess.DEVNULL,
+            )
         else:
             raise NotImplementedError(f"Unknown power method {method}")
 
@@ -335,7 +368,7 @@ class Testbed:
     def get_current_claim(self):
         claimfile = os.path.join(bootconfdir, f"testbed{self.hostid}-claim")
         if os.path.exists(claimfile):
-            with open(claimfile, 'r') as f:
+            with open(claimfile, "r") as f:
                 return f.readline().strip()
         return None
 
@@ -371,11 +404,11 @@ class Testbed:
         # when that happens, allow gitlab to claim the host and continue, even
         # though somebody else is already waiting for the host - gitlab jobs
         # are only a few minutes long, so it's better this way
-        if claim.endswith(':gitlab'):
+        if claim.endswith(":gitlab"):
             try:
                 lock_owner = Lock.get_lock_owner(f"claim-{self.hostid}")
                 if lock_owner.endswith(":openqa"):
-                    with open(claimfile, 'w') as f:
+                    with open(claimfile, "w") as f:
                         f.write(claim)
                     return
             except FileNotFoundError:
@@ -394,25 +427,45 @@ class Testbed:
 
             if not claim.endswith(":gitlab") and self._has_gitlab():
                 try:
-                    subprocess.run(["ssh", f"service-control@{self.hal_hostname}",
-                                    "service-control gitlab stop"],
-                                   check=True)
+                    subprocess.run(
+                        [
+                            "ssh",
+                            f"service-control@{self.hal_hostname}",
+                            "service-control gitlab stop",
+                        ],
+                        check=True,
+                    )
                 except subprocess.CalledProcessError as e:
                     if e.returncode == 127:
-                        subprocess.run(["ssh", f"service-control@{self.hal_hostname}",
-                            "sudo systemctl stop gitlab-runner.service"])
+                        subprocess.run(
+                            [
+                                "ssh",
+                                f"service-control@{self.hal_hostname}",
+                                "sudo systemctl stop gitlab-runner.service",
+                            ]
+                        )
 
             if not claim.endswith(":openqa"):
                 try:
-                    subprocess.run(["ssh", f"service-control@{self.hal_hostname}",
-                                    "service-control openqa stop"],
-                                   check=True)
+                    subprocess.run(
+                        [
+                            "ssh",
+                            f"service-control@{self.hal_hostname}",
+                            "service-control openqa stop",
+                        ],
+                        check=True,
+                    )
                 except subprocess.CalledProcessError as e:
                     if e.returncode == 127:
-                        subprocess.run(["ssh", f"service-control@{self.hal_hostname}",
-                            "sudo systemctl stop openqa-worker.target openqa-worker-cacheservice-minion.service"])
+                        subprocess.run(
+                            [
+                                "ssh",
+                                f"service-control@{self.hal_hostname}",
+                                "sudo systemctl stop openqa-worker.target openqa-worker-cacheservice-minion.service",
+                            ]
+                        )
 
-            with open(claimfile, 'w') as f:
+            with open(claimfile, "w") as f:
                 f.write(claim)
 
     def release(self, user: User | None, claim, force: bool = False):
@@ -425,22 +478,42 @@ class Testbed:
 
         if not claim.endswith(":gitlab") and self._has_gitlab():
             try:
-                subprocess.run(["ssh", f"service-control@{self.hal_hostname}",
-                                "service-control gitlab start"],
-                               check=True)
+                subprocess.run(
+                    [
+                        "ssh",
+                        f"service-control@{self.hal_hostname}",
+                        "service-control gitlab start",
+                    ],
+                    check=True,
+                )
             except subprocess.CalledProcessError as e:
                 if e.returncode == 127:
-                    subprocess.run(["ssh", f"service-control@{self.hal_hostname}",
-                        "sudo systemctl start gitlab-runner.service"])
+                    subprocess.run(
+                        [
+                            "ssh",
+                            f"service-control@{self.hal_hostname}",
+                            "sudo systemctl start gitlab-runner.service",
+                        ]
+                    )
         if not claim.endswith(":openqa"):
             try:
-                subprocess.run(["ssh", f"service-control@{self.hal_hostname}",
-                                "service-control openqa start"],
-                               check=True)
+                subprocess.run(
+                    [
+                        "ssh",
+                        f"service-control@{self.hal_hostname}",
+                        "service-control openqa start",
+                    ],
+                    check=True,
+                )
             except subprocess.CalledProcessError as e:
                 if e.returncode == 127:
-                    subprocess.run(["ssh", f"service-control@{self.hal_hostname}",
-                        "sudo systemctl start openqa-worker.target openqa-worker-cacheservice-minion.service"])
+                    subprocess.run(
+                        [
+                            "ssh",
+                            f"service-control@{self.hal_hostname}",
+                            "sudo systemctl start openqa-worker.target openqa-worker-cacheservice-minion.service",
+                        ]
+                    )
 
         os.remove(claimfile)
 
@@ -476,54 +549,117 @@ class Testbed:
         with Lock(f"console-{self.hostid}"):
             console_type = self.config.get("console")
             if console_type.startswith("hal-picocom-AMA"):
-                dev_suffix = console_type[len("hal-picocom-"):]
-                subprocess.run(["ssh", "-t", f"console@{self.hal_hostname}",
-                                "picocom", "--send-cmd=false", "--receive-cmd=false", "-b", "115200", "/dev/tty" + dev_suffix])
+                dev_suffix = console_type[len("hal-picocom-") :]
+                subprocess.run(
+                    [
+                        "ssh",
+                        "-t",
+                        f"console@{self.hal_hostname}",
+                        "picocom",
+                        "--send-cmd=false",
+                        "--receive-cmd=false",
+                        "-b",
+                        "115200",
+                        "/dev/tty" + dev_suffix,
+                    ]
+                )
             elif console_type == "hal-connect-USB0":
-                subprocess.run(["ssh", "-t", f"console@{self.hal_hostname}",
-                                "connect-serial-console", "/dev/ttyUSB0"])
+                subprocess.run(
+                    [
+                        "ssh",
+                        "-t",
+                        f"console@{self.hal_hostname}",
+                        "connect-serial-console",
+                        "/dev/ttyUSB0",
+                    ]
+                )
             elif console_type == "local":
                 console_device = f"/dev/console-test{self.hostid}"
                 if not os.path.exists(console_device):
-                    raise NotImplementedError(f"Console for test{self.hostid} is not connected")
-                subprocess.run(["picocom", "--send-cmd=false", "--receive-cmd=false","-b", "115200", console_device])
+                    raise NotImplementedError(
+                        f"Console for test{self.hostid} is not connected"
+                    )
+                subprocess.run(
+                    [
+                        "picocom",
+                        "--send-cmd=false",
+                        "--receive-cmd=false",
+                        "-b",
+                        "115200",
+                        console_device,
+                    ]
+                )
             else:
                 raise NotImplementedError("Console not supported for this host")
 
     def vncstart(self):
-        kvm_services = self.config.get("kvm-services",
-            "kvmd-otg.service kvmd.service kvmd-vnc.service").split()
+        kvm_services = self.config.get(
+            "kvm-services", "kvmd-otg.service kvmd.service kvmd-vnc.service"
+        ).split()
         if not kvm_services:
             raise NotImplementedError("KVM / VNC not supported for this host")
-        subprocess.run(["ssh", f"service-control@{self.hal_hostname}",
-                        "sudo", "systemctl", "start", *kvm_services])
+        subprocess.run(
+            [
+                "ssh",
+                f"service-control@{self.hal_hostname}",
+                "sudo",
+                "systemctl",
+                "start",
+                *kvm_services,
+            ]
+        )
         print(f"Listening on 172.16.{self.hostid}.2:5900")
 
     def vncstop(self):
-        kvm_services = self.config.get("kvm-services",
-            "kvmd-otg.service kvmd.service kvmd-vnc.service").split()
+        kvm_services = self.config.get(
+            "kvm-services", "kvmd-otg.service kvmd.service kvmd-vnc.service"
+        ).split()
         if not kvm_services:
             raise NotImplementedError("KVM / VNC not supported for this host")
-        subprocess.run(["ssh", f"service-control@{self.hal_hostname}",
-                        "sudo", "systemctl", "stop", *kvm_services])
+        subprocess.run(
+            [
+                "ssh",
+                f"service-control@{self.hal_hostname}",
+                "sudo",
+                "systemctl",
+                "stop",
+                *kvm_services,
+            ]
+        )
 
-    def _inject_ssh_target(self, command_prefix: list[str], path_prefix: str, user: User):
+    def _inject_ssh_target(
+        self, command_prefix: list[str], path_prefix: str, user: User
+    ):
         try:
             with subprocess.Popen(
-                    command_prefix + ["tee", "-a", f"{path_prefix}/root/.ssh/authorized_keys"],
-                    stdin=subprocess.PIPE, stdout=subprocess.DEVNULL) as proc:
-                for key in user.get_user_ssh_keys():
-                    proc.stdin.write(f"{key}\n".encode())
-            subprocess.run(command_prefix + ["mkdir", "-p", f"{path_prefix}/home/user/.ssh"],
-                           check=True)
-            with subprocess.Popen(command_prefix + ["tee", "-a",
-                                                    f"{path_prefix}/home/user/.ssh/authorized_keys"],
-                                  stdin=subprocess.PIPE, stdout=subprocess.DEVNULL) as proc:
+                command_prefix
+                + ["tee", "-a", f"{path_prefix}/root/.ssh/authorized_keys"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+            ) as proc:
                 for key in user.get_user_ssh_keys():
                     proc.stdin.write(f"{key}\n".encode())
             subprocess.run(
-                command_prefix + ["chown", "-R", "user:user", f"{path_prefix}/home/user/.ssh"],
-                check=True)
+                command_prefix + ["mkdir", "-p", f"{path_prefix}/home/user/.ssh"],
+                check=True,
+            )
+            with subprocess.Popen(
+                command_prefix
+                + [
+                    "tee",
+                    "-a",
+                    f"{path_prefix}/home/user/.ssh/authorized_keys",
+                ],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+            ) as proc:
+                for key in user.get_user_ssh_keys():
+                    proc.stdin.write(f"{key}\n".encode())
+            subprocess.run(
+                command_prefix
+                + ["chown", "-R", "user:user", f"{path_prefix}/home/user/.ssh"],
+                check=True,
+            )
         except subprocess.CalledProcessError as e:
             print(f"Failed to inject SSH key, command {e.cmd} failed")
             sys.exit(1)
@@ -531,9 +667,12 @@ class Testbed:
     def inject_ssh(self, user: User):
         command_prefix = [
             "ssh",
-            "-o", "UserKnownHostsFile=/dev/null",
-            "-o", "StrictHostKeyChecking=no",
-            "-o", "LogLevel=error",
+            "-o",
+            "UserKnownHostsFile=/dev/null",
+            "-o",
+            "StrictHostKeyChecking=no",
+            "-o",
+            "LogLevel=error",
             f"root@test-{self.hostid}.testnet",
         ]
         # check if it's running qubes system, or rescue one
@@ -553,8 +692,7 @@ class Testbed:
             subprocess.run(command_prefix + [" && ".join(script_open)], check=True)
             self._inject_ssh_target(command_prefix, "/mnt/sysimage-ssh", user)
             script_close = [
-                "umount /mnt/sysimage-ssh"
-                "vgchange -an",
+                "umount /mnt/sysimage-ssh" "vgchange -an",
                 "cryptsetup close luks",
             ]
             subprocess.run(command_prefix + [" && ".join(script_close)], check=True)
@@ -567,16 +705,36 @@ class Testbed:
         print(f"Listing {img_path}:")
         subprocess.run(["ls", "-l", img_path])
 
-        if not os.path.exists(extracted_path) or os.path.getmtime(img_path) > os.path.getmtime(extracted_path):
+        if not os.path.exists(extracted_path) or os.path.getmtime(
+            img_path
+        ) > os.path.getmtime(extracted_path):
             subprocess.run(["rm", "-rf", os.path.join(rescuedir, "initrd")])
             os.makedirs(os.path.join(rescuedir, "initrd"), exist_ok=True)
-            subprocess.run(["unmkinitramfs", img_path, os.path.join(rescuedir, "initrd")])
-            with open(extracted_path, 'w') as f:
-                f.write('')
+            subprocess.run(
+                ["unmkinitramfs", img_path, os.path.join(rescuedir, "initrd")]
+            )
+            with open(extracted_path, "w") as f:
+                f.write("")
 
-        for key_file in os.listdir(os.path.join(rescuedir, "initrd", "main", "etc", "dropbear")):
+        for key_file in os.listdir(
+            os.path.join(rescuedir, "initrd", "main", "etc", "dropbear")
+        ):
             if key_file.startswith("dropbear_") and key_file.endswith("_host_key"):
-                subprocess.run(["dropbearkey", "-y", "-f", os.path.join(rescuedir, "initrd", "main", "etc", "dropbear", key_file)])
+                subprocess.run(
+                    [
+                        "dropbearkey",
+                        "-y",
+                        "-f",
+                        os.path.join(
+                            rescuedir,
+                            "initrd",
+                            "main",
+                            "etc",
+                            "dropbear",
+                            key_file,
+                        ),
+                    ]
+                )
 
     def get_selected_ssh_keys(self) -> str:
         claim = self.get_current_claim()
@@ -594,16 +752,21 @@ def cmd_status(testbed):
       Currently in use by: {testbed.get_current_claim()}"""
     print(dedent(status_msg))
 
+
 def cmd_status_all(user: User, current: Testbed):
     fmt = "{current}{hostid:<5}{claim:<15}{bootmode:<15}"
     print(fmt.format(current=" ", hostid="Host", claim="User", bootmode="Bootmode"))
     for target in sorted(user.get_allowed_targets()):
         testbed = Testbed(target)
-        print(fmt.format(
-            current=("*" if current.hostid == target else " "),
-            hostid=target,
-            claim=testbed.get_current_claim() or "",
-            bootmode=testbed.get_current_mode() or ""))
+        print(
+            fmt.format(
+                current=("*" if current.hostid == target else " "),
+                hostid=target,
+                claim=testbed.get_current_claim() or "",
+                bootmode=testbed.get_current_mode() or "",
+            )
+        )
+
 
 def cmd_help(testbed):
     help_msg = """\
@@ -644,12 +807,13 @@ def cmd_help(testbed):
     cmd_status(testbed)
     sys.exit(0)
 
+
 def setup_logging():
-    ha_syslog = logging.handlers.SysLogHandler('/dev/log')
-    ha_syslog.setFormatter(
-        logging.Formatter('%(name)s[%(process)d]: %(message)s'))
+    ha_syslog = logging.handlers.SysLogHandler("/dev/log")
+    ha_syslog.setFormatter(logging.Formatter("%(name)s[%(process)d]: %(message)s"))
     logging.root.addHandler(ha_syslog)
     logging.root.setLevel("INFO")
+
 
 def get_control_ssh_keys():
     self_path = __file__
@@ -657,6 +821,7 @@ def get_control_ssh_keys():
         user = User(user_conf.with_suffix("").name)
         for key in user.get_user_ssh_keys():
             yield f'restrict,pty,command="sudo {self_path} {user.name} ssh" {key}'
+
 
 def main():
     setup_logging()
@@ -695,15 +860,24 @@ def main():
         if user is not None:
             target = user.get_default_target()
         else:
-            print(f"Invalid target {sys.argv[1]}, must be a number!", file=sys.stderr)
+            print(
+                f"Invalid target {sys.argv[1]}, must be a number!",
+                file=sys.stderr,
+            )
             sys.exit(1)
 
     if target is None:
-        print(f"No target provided and no default for user {username}!", file=sys.stderr)
+        print(
+            f"No target provided and no default for user {username}!",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     if user and not user.check_target_access(target):
-        print(f"User {username} has no access to target {target}!", file=sys.stderr)
+        print(
+            f"User {username} has no access to target {target}!",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     try:
@@ -718,13 +892,24 @@ def main():
     for cmd in commands:
         testbed.log.info("command: %s", cmd)
         # verify if target is claimed by this user
-        if cmd not in ["help", "status", "status-all", "claim", "set-default"] \
-                and not cmd.startswith("claim:"):
+        if cmd not in [
+            "help",
+            "status",
+            "status-all",
+            "claim",
+            "set-default",
+        ] and not cmd.startswith("claim:"):
             if user and not testbed.check_claim(user):
                 if target_options == "force" and user.is_admin():
-                    print(f"Using admin powers to access {target} !", file=sys.stderr)
+                    print(
+                        f"Using admin powers to access {target} !",
+                        file=sys.stderr,
+                    )
                 else:
-                    print(f"Target {target} not claimed by user {user}!", file=sys.stderr)
+                    print(
+                        f"Target {target} not claimed by user {user}!",
+                        file=sys.stderr,
+                    )
                     sys.exit(1)
         if cmd == "help":
             cmd_help(testbed)
@@ -777,6 +962,7 @@ def main():
         else:
             print(f"Invalid command '{cmd}'")
             sys.exit(1)
+
 
 if __name__ == "__main__":
     try:
