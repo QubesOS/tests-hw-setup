@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 
 import os
+import socket
 import sys
 import subprocess
 import fcntl
@@ -104,7 +105,53 @@ Gives a bunch of admin access.
 Can suffix target with ":force" to access target claimed by other user
 (including issuing release command then).
 
+### ip
+
+List of IP addresses from where this user can connect to target hosts.
+
+UBUS config format
+==================
+
+TOML file describing how to access UBUS over HTTP to configure firewall.
+The file is located in /etc/testbed/ubus.conf
+
+Config options
+--------------
+
+### api-url
+
+UBUS URL, for example https://some-name.testnet/ubus
+
+### username
+
+API username
+
+### password
+
+API password
+
+### ca-cert
+
+Specific CA certificate to use for HTTPS connection, path to a PEM file
+
+### rule-template
+
+section containing OpenWrt firewall rule template, for example:
+
+    src = vpn
+    dest = devices
+    target = ACCEPT
+
+"src_ip" and "dest_ip" lists will be added to it automatically.
+
 """
+
+
+class UbusError(Exception):
+    def __init__(self, code):
+        self.code = code
+        super().__init__(f"UBUS error {code}")
+
 
 class Lock:
     def __init__(self, name, owner=None):
@@ -197,11 +244,16 @@ class User:
         else:
             yield from allowed_targets
 
+    def get_ip(self):
+        return self.config.get("ip", None)
+
 
 class Testbed:
     def __init__(self, hostid):
         self.hostid = hostid
         self.config = {}
+        self._ubus_config = {}
+        self._ubus_session = "00" * 16
 
         self.load_config()
         self.hal_hostname = f"hal90{self.hostid:02d}.testnet"
@@ -365,6 +417,106 @@ class Testbed:
     def _has_gitlab(self):
         return self.config.get("gitlab", False)
 
+    def _load_ubus_config(self):
+        if self._ubus_config:
+            return
+        configpath = os.path.join(configdir, f"ubus.conf")
+        with open(configpath, "r") as f:
+            self._ubus_config = tomlkit.load(f)
+
+    def _ubus_call(self, path, method, **kwargs):
+        assert self._ubus_config
+        # keep this import scope small, it takes 400ms+ to import it
+        import requests
+
+        r = requests.post(
+            self._ubus_config["api-url"],
+            json={
+                "method": "call",
+                "params": [self._ubus_session, path, method, kwargs],
+                "jsonrpc": "2.0",
+                "id": 0,
+            },
+            verify=self._ubus_config["ca-cert"],
+        )
+        r.raise_for_status()
+        r_json = r.json()
+        if "error" in r_json:
+            raise Exception(
+                f"Method {path}/{method} failed with error {r_json['error']}"
+            )
+        result = r_json["result"]
+        if result[0] != 0:
+            raise UbusError(result[0])
+        if len(result) > 1:
+            return result[1]
+        else:
+            return {}
+
+    def _ubus_login(self):
+        self._load_ubus_config()
+        self._ubus_session = self._ubus_call(
+            "session",
+            "login",
+            username=self._ubus_config["username"],
+            password=self._ubus_config["password"],
+        )["ubus_rpc_session"]
+
+    def target_ip_list(self):
+        results = []
+        results += socket.getaddrinfo(
+            f"test-{self.hostid}.testnet", None, socket.AF_UNSPEC
+        )
+        results += socket.getaddrinfo(self.hal_hostname, None, socket.AF_UNSPEC)
+        return list(set(result[4][0] for result in results))
+
+    def _firewall_reload(self):
+        self._ubus_call("uci", "commit", config="firewall")
+        self._ubus_call(
+            "file", "exec", command="/etc/init.d/firewall", params=["reload"]
+        )
+
+    def firewall_allow_user(self, user: User):
+        if not user.get_ip():
+            return
+        self._ubus_login()
+        rule_name = f"user-{user.name}-host-{self.hostid}"
+        self._ubus_call(
+            "uci",
+            "add",
+            config="firewall",
+            type="rule",
+            section=rule_name,
+            values=(
+                self._ubus_config["rule-template"]
+                | {
+                    "src_ip": user.get_ip(),
+                    "dest_ip": self.target_ip_list(),
+                    "name": rule_name,
+                }
+            ),
+        )
+        self._firewall_reload()
+
+    def firewall_deny_user(self, user: User):
+        if not user.get_ip():
+            return
+        self._ubus_login()
+        rule_name = f"user-{user.name}-host-{self.hostid}"
+        try:
+            self._ubus_call(
+                "uci",
+                "delete",
+                config="firewall",
+                type="rule",
+                match={"name": rule_name},
+            )
+            self._firewall_reload()
+        except UbusError as e:
+            # ignore UBUS_STATUS_NOT_FOUND
+            if e.code != 4:
+                raise
+
     def get_current_claim(self):
         claimfile = os.path.join(bootconfdir, f"testbed{self.hostid}-claim")
         if os.path.exists(claimfile):
@@ -465,6 +617,8 @@ class Testbed:
                             ]
                         )
 
+            self.firewall_allow_user(user)
+
             with open(claimfile, "w") as f:
                 f.write(claim)
 
@@ -475,6 +629,8 @@ class Testbed:
 
         if current_claim != claim and not force:
             raise PermissionError(f"Currently in use by {current_claim}, not {claim}")
+
+        self.firewall_deny_user(user)
 
         if not claim.endswith(":gitlab") and self._has_gitlab():
             try:
