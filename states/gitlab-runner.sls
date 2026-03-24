@@ -9,7 +9,7 @@
 /etc/pki/RPM-GPG-gitlab-runner-49F16C5CC3A0F81F:
   file.managed:
     - source: https://packages.gitlab.com/runner/gitlab-runner/gpgkey/runner-gitlab-runner-49F16C5CC3A0F81F.pub.gpg
-    - source_hash: d109099f78cf12914cd4c6bc9733948f8c5da8bab7b9d6803f2f76ea32f21664
+    - source_hash: d6f5a5578c0d6b75572275577c2b9bfbe369935276fc469aa645a0353feb98cf
 
 /etc/pki/RPM-GPG-gitlab-runner-repo:
   file.managed:
