@@ -50,6 +50,7 @@ Space separated list of actions; possible options:
 - hal-button - press power button via HAL host (uses "control" account)
 - hal-wake-button - press power button via HAL host (uses "control" account) -
   same as hal-button, but press it only to wakeup from sleep, not on poweron
+- hal-poweron-button - similar to hal-wake-button, but only on poweron, not wakeup
 - boot-menu - call "boot-menu-interact USB" script on the hal host when boot mode
   is set to "custom"; it's supposed to navigate boot menu (for example via serial
   console or USB HID) to select booting from USB; useful together with "send-bootfiles=true"
