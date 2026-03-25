@@ -54,6 +54,8 @@ Space separated list of actions; possible options:
 - boot-menu - call "boot-menu-interact USB" script on the hal host when boot mode
   is set to "custom"; it's supposed to navigate boot menu (for example via serial
   console or USB HID) to select booting from USB; useful together with "send-bootfiles=true"
+- sleep-poweron:seconds - wait given number of seconds before next action -
+  applies only to poweron action, not wakeup
 
 ### send-bootfiles
 
@@ -412,6 +414,10 @@ class Testbed:
                 ],
                 stdout=subprocess.DEVNULL,
             )
+        elif method == "sleep-poweron":
+            if action != "poweron":
+                return
+            time.sleep(int(args[0]))
         else:
             raise NotImplementedError(f"Unknown power method {method}")
 
