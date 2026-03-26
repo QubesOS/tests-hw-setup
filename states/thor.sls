@@ -26,6 +26,7 @@ packages:
     - python3-rpi.gpio
     - python3-setuptools
     - python3-requests
+    - python3-tomlkit
     - rsync
     - sudo
     - tcpdump
@@ -165,6 +166,11 @@ control:
   - source: salt://thor/testbed-control
   - mode: 755
 
+/usr/local/bin/testbed-ssh-keys:
+  file.managed:
+  - source: salt://thor/testbed-ssh-keys
+  - mode: 755
+
 /etc/tmpfiles.d/testbed-control.conf:
   file.managed:
   - contents: |
@@ -269,6 +275,16 @@ test{{hostid}}:
       console: {{hosts[host].get("console", "hal-connect-USB0")}}
       kvm_services: {{hosts[host].get("kvm-services", "default")}}
 
+{% if hosts[host].get("hal-pubkey") %}
+/etc/testbed/users/ci-{{hostid}}.conf:
+  file.managed:
+  - makedirs: True
+  - contents: |
+      ci-user = true
+      allowed-targets = [{{hostid}}]
+      default-target = {{hostid}}
+      ssh-keys = ["{{hosts[host].get("hal-pubkey")}}"]
+{% endif %}
 {% endfor %}
 
 /etc/default/tftpd-hpa:

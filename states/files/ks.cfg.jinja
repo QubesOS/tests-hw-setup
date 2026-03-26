@@ -6,6 +6,7 @@ keyboard --vckeymap=us
 timezone --utc UTC
 
 sshpw --username root --sshkey "{{salt['pillar.get']('openqa:worker:ssh_pubkey', '')}}"
+sshpw --username root --sshkey "{{salt['pillar.get']('gadget:thor_pubkey', '')}}"
 
 %packages
 @^qubes-xfce
