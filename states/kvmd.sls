@@ -505,3 +505,6 @@ cp -r /var/lib/pikvm-sources/kvmd/contrib/keymaps /usr/share/kvmd/:
         service-control ALL=(root) NOPASSWD: /bin/systemctl stop kvmd-otg.service kvmd.service kvmd-vnc.service
         kvmd ALL=(root) NOPASSWD: /usr/bin/kvmd-helper-otgmsd-remount
 
+firewalld:
+  service.dead:
+  - enable: False
