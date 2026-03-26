@@ -334,6 +334,7 @@ kvmd-install:
       PIKVM_MODEL=v3
       PIKVM_VIDEO=hdmi
       PIKVM_BOARD=rpi4
+  - makedirs: true
 
 /etc/systemd/system/kvmd-janus-static.service.d/paths.conf:
   file.managed:
