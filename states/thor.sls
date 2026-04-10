@@ -343,6 +343,8 @@ test{{hostid}}:
 {% endif %}
 {% endfor %}
 
+### tftp
+
 /etc/default/tftpd-hpa:
   file.managed:
   - contents: |
@@ -388,7 +390,8 @@ openqa-share:
   - contents: |
       #!/bin/sh
 
-      flock /home/openqa-share/sync.lock rsync -av --max-size=8g --delete rsync://openqa.qubes-os.org/openqa-factory/ /srv/openqa-share/factory/
+      flock /home/openqa-share/sync.lock rsync -av --max-size=10g --delete --exclude=/hdd rsync://openqa.qubes-os.org/openqa-factory/ /srv/openqa-share/factory/
+      flock /home/openqa-share/sync.lock rsync -av --max-size=1g --delete rsync://openqa.qubes-os.org/openqa-factory/hdd/ /srv/openqa-share/factory/hdd/
       flock /home/openqa-share/sync.lock rsync -av --max-size=8g --delete rsync://openqa.qubes-os.org/openqa-tests/ /srv/openqa-share/tests/
   - mode: 0755
 
