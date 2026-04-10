@@ -1,0 +1,8 @@
+#sshpw --username root --sshkey ""
+sshpw --username root --sshkey "{{thor_pubkey}}"
+{% raw -%}
+{% for key in ssh_keys %}
+sshpw --username root --sshkey "{{key}}"
+{% endfor %}
+{% endraw %}
+

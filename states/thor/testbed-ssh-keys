@@ -1,0 +1,25 @@
+#!/bin/sh
+
+confdir=/etc/testbed
+claimdir=/srv/tftp/grub2-efi
+
+get_keys_of_user() {
+    local user=$1
+    grep -o '\(ssh-ed25519\|ssh-rsa\) [^ "]*' "/etc/testbed/users/$user.conf" 2>/dev/null
+}
+
+if [ "$1" = "control" ]; then
+    for user_conf in "$confdir"/users/*.conf; do
+        user="$(basename $user_conf .conf)"
+        get_keys_of_user "$user" | sed -e 's:^:restrict,pty,command="sudo /usr/local/bin/testbed-control '$user' ssh" :'
+    done
+elif [ "${1%%[1-9]*}" = "test" ]; then
+    hostid=${1#test}
+    claim_file="$claimdir"/testbed${hostid}-claim
+    if [ -e "$claim_file" ]; then
+        claim=$(cat "$claim_file")
+        claim=${claim%:*}
+        get_keys_of_user "$claim"
+    fi
+fi
+exit 0

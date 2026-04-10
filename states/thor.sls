@@ -1,4 +1,5 @@
 {% set hosts = salt['pillar.get']('boot-hosts') %}
+{% set pythondir = '/usr/local/lib/python3.' ~ salt['grains.get']('pythonversion')[1] ~ '/site-packages' %}
 
 /etc/ssh/sshd_config.d/thor.conf:
   file.managed:
@@ -22,16 +23,20 @@ packages:
     - pkg-config
     - python3
     - python3-dev
+    - python3-flask
     - python3-luma.led-matrix
+    - python3-requests
     - python3-rpi.gpio
     - python3-setuptools
-    - python3-requests
+    - python3-tomlkit
     - rsync
     - sudo
     - tcpdump
     - tftpd-hpa
     - tmux
     - usbutils
+    - uwsgi
+    - uwsgi-plugin-python3
     - vim
 
 
@@ -122,6 +127,15 @@ build sispmctl:
   file.managed:
   - makedirs: True
   - contents: |
+      $HTTP["url"] == "/rescue-qubes/ks.cfg" {
+        $HTTP["querystring"] == "" {
+          proxy.server = ( "" => ( ( "socket" => "/run/testbed-api/socket" ) ) )
+          proxy.forwarded = ( "for" => 1 )
+          proxy.header = (
+            "map-urlpath" => ( "/rescue-qubes/ks.cfg" => "/api/render_file?template=/srv/tftp/rescue-qubes/ks.cfg.jinja" )
+          )
+        }
+      }
       alias.url += ( "/qinstall" => "/srv/tftp/qinstall" )
       alias.url += ( "/rescue/" => "/srv/tftp/rescue/" )
       alias.url += ( "/rescue-qubes/" => "/srv/tftp/rescue-qubes/" )
@@ -146,6 +160,10 @@ lighttpd-enable-mod accesslog:
   cmd.run:
   - creates: /etc/lighttpd/conf-enabled/10-accesslog.conf
 
+lighttpd-enable-mod proxy:
+  cmd.run:
+  - creates: /etc/lighttpd/conf-enabled/10-proxy.conf
+
 lighttpd-disable-mod unconfigured:
   cmd.run:
   - unless: "! test -f /etc/lighttpd/conf-enabled/99-unconfigured.conf"
@@ -160,15 +178,59 @@ control:
       Defaults env_keep += "SSH_ORIGINAL_COMMAND"
       control ALL=(ALL:ALL) NOPASSWD:/usr/local/bin/testbed-control
 
-/usr/local/bin/testbed-control:
+{{pythondir}}/testbed/__init__.py:
+  file.managed:
+  - contents: ""
+  - makedirs: True
+
+{{pythondir}}/testbed/control.py:
   file.managed:
   - source: salt://thor/testbed-control
+  - mode: 755
+
+/usr/local/bin/testbed-control:
+  file.symlink:
+  - target: {{pythondir}}/testbed/control.py
+  - force: True
+
+/usr/local/bin/testbed-ssh-keys:
+  file.managed:
+  - source: salt://thor/testbed-ssh-keys
   - mode: 755
 
 /etc/tmpfiles.d/testbed-control.conf:
   file.managed:
   - contents: |
       d /run/testbed-control 0755 root root - -
+      d /run/testbed-api 0755 control root - -
+
+/srv/tftp/rescue-qubes/ks.cfg.jinja:
+  file.managed:
+  - source: salt://thor/rescue-ks.cfg.jinja
+  - makedirs: True
+  - template: jinja
+  - context:
+      thor_pubkey: {{salt['pillar.get']('gadget:thor_pubkey')}}
+
+{{pythondir}}/testbed/api.py:
+  file.managed:
+  - source: salt://thor/testbed_api.py
+  - mode: 755
+
+/etc/systemd/system/testbed-api.service:
+  file.managed:
+  - contents: |
+      [Service]
+      Environment=PYTHONPATH={{pythondir}}
+      ExecStart=/usr/bin/uwsgi --http-socket /run/testbed-api/socket --chmod-socket=664 --uid control --chown-socket control:www-data --master -p 2 --plugin python3 -w testbed.api:app
+
+      [Install]
+      WantedBy=multi-user.target
+
+testbed-api.service:
+  service.running:
+  - enable: True
+  - reload: True
 
 /srv/tftp/grub2-efi:
   file.recurse:
@@ -269,6 +331,16 @@ test{{hostid}}:
       console: {{hosts[host].get("console", "hal-connect-USB0")}}
       kvm_services: {{hosts[host].get("kvm-services", "default")}}
 
+{% if hosts[host].get("hal-pubkey") %}
+/etc/testbed/users/ci-{{hostid}}.conf:
+  file.managed:
+  - makedirs: True
+  - contents: |
+      ci-user = true
+      allowed-targets = [{{hostid}}]
+      default-target = {{hostid}}
+      ssh-keys = ["{{hosts[host].get("hal-pubkey")}}"]
+{% endif %}
 {% endfor %}
 
 /etc/default/tftpd-hpa:

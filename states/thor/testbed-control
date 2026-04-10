@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 
 import os
+import socket
 import sys
 import subprocess
 import fcntl
@@ -8,12 +9,12 @@ import time
 import logging
 import logging.handlers
 import functools
-import tomllib
+import pathlib
 from textwrap import dedent
 
-import requests
+import tomlkit
 
-configdir = "/etc/testbed"
+configdir = pathlib.Path("/etc/testbed")
 bootconfdir = "/srv/tftp/grub2-efi"
 ipxeconfdir = "/srv/tftp/ipxe"
 lockdir = "/run/testbed-control"
@@ -49,9 +50,12 @@ Space separated list of actions; possible options:
 - hal-button - press power button via HAL host (uses "control" account)
 - hal-wake-button - press power button via HAL host (uses "control" account) -
   same as hal-button, but press it only to wakeup from sleep, not on poweron
+- hal-poweron-button - similar to hal-wake-button, but only on poweron, not wakeup
 - boot-menu - call "boot-menu-interact USB" script on the hal host when boot mode
   is set to "custom"; it's supposed to navigate boot menu (for example via serial
   console or USB HID) to select booting from USB; useful together with "send-bootfiles=true"
+- sleep-poweron:seconds - wait given number of seconds before next action -
+  applies only to poweron action, not wakeup
 
 ### send-bootfiles
 
@@ -77,7 +81,80 @@ Default: kvmd-otg.service kvmd.service kvmd-vnc.service
 
 Set to empty to disable KVM on this testbed.
 
+User config format
+==================
+
+TOML
+
+Config options
+--------------
+
+### allowed-targets
+
+Array of allowed hosts (just numbers). Or a special value "all".
+
+### default-target
+
+Default target host. Can be also set by the user.
+
+### ci-user
+
+Is it a special user for gitlab/openqa? When set to true, claim:gitlab and
+claim:openqa commands are allowed.
+
+### admin
+
+Gives a bunch of admin access.
+Can suffix target with ":force" to access target claimed by other user
+(including issuing release command then).
+
+### ip
+
+List of IP addresses from where this user can connect to target hosts.
+
+UBUS config format
+==================
+
+TOML file describing how to access UBUS over HTTP to configure firewall.
+The file is located in /etc/testbed/ubus.conf
+
+Config options
+--------------
+
+### api-url
+
+UBUS URL, for example https://some-name.testnet/ubus
+
+### username
+
+API username
+
+### password
+
+API password
+
+### ca-cert
+
+Specific CA certificate to use for HTTPS connection, path to a PEM file
+
+### rule-template
+
+section containing OpenWrt firewall rule template, for example:
+
+    src = vpn
+    dest = devices
+    target = ACCEPT
+
+"src_ip" and "dest_ip" lists will be added to it automatically.
+
 """
+
+
+class UbusError(Exception):
+    def __init__(self, code):
+        self.code = code
+        super().__init__(f"UBUS error {code}")
+
 
 class Lock:
     def __init__(self, name, owner=None):
@@ -87,10 +164,9 @@ class Lock:
 
     @classmethod
     def get_lock_owner(cls, name):
-        """ Get current lock owner, may raise FileNotFoundError """
+        """Get current lock owner, may raise FileNotFoundError"""
         with open(os.path.join(lockdir, name) + "-owner") as f:
             return f.read().strip()
-
 
     def __enter__(self):
         assert self.fd == -1
@@ -114,13 +190,73 @@ class Lock:
         def wrapper(*args, **kwargs):
             with self:
                 return func(*args, **kwargs)
+
         return wrapper
+
+
+class User:
+    def __init__(self, name):
+        self.name = name
+        self.config = {}
+        try:
+            self.load_config()
+        except FileNotFoundError:
+            raise KeyError(f"No such user: {name}")
+
+        self.log = logging.getLogger(f"user.{self.name}")
+
+    def __str__(self):
+        return self.name
+
+    def load_config(self):
+        configpath = os.path.join(configdir, "users", f"{self.name}.conf")
+        with open(configpath, "rb") as f:
+            self.config = tomlkit.load(f)
+
+    def get_default_target(self):
+        if "default-target" not in self.config:
+            return None
+        return int(self.config.get("default-target"))
+
+    def set_default_target(self, target):
+        self.config["default-target"] = target
+        configpath = os.path.join(configdir, "users", f"{self.name}.conf")
+        with open(configpath, "w") as f:
+            tomlkit.dump(self.config, f)
+
+    def check_target_access(self, target):
+        allowed_targets = self.config.get("allowed-targets", "")
+        if allowed_targets == "all":
+            return True
+        return target in allowed_targets
+
+    def is_ci_user(self):
+        return bool(self.config.get("ci-user", False))
+
+    def is_admin(self):
+        return bool(self.config.get("admin", False))
+
+    def get_user_ssh_keys(self):
+        return self.config.get("ssh-keys", [])
+
+    def get_allowed_targets(self):
+        allowed_targets = self.config.get("allowed-targets", "")
+        if allowed_targets == "all":
+            for conf in (configdir / "hosts").glob("*.conf"):
+                yield int(conf.with_suffix("").name)
+        else:
+            yield from allowed_targets
+
+    def get_ip(self):
+        return self.config.get("ip", None)
 
 
 class Testbed:
     def __init__(self, hostid):
         self.hostid = hostid
         self.config = {}
+        self._ubus_config = {}
+        self._ubus_session = "00" * 16
 
         self.load_config()
         self.hal_hostname = f"hal90{self.hostid:02d}.testnet"
@@ -129,8 +265,8 @@ class Testbed:
 
     def load_config(self):
         configpath = os.path.join(configdir, "hosts", f"{self.hostid}.conf")
-        with open(configpath, "rb") as f:
-            self.config = tomllib.load(f)
+        with open(configpath, "r") as f:
+            self.config = tomlkit.load(f)
 
     def get_current_mode(self):
         bootfile = os.path.join(bootconfdir, f"testbed{self.hostid}-default")
@@ -142,13 +278,23 @@ class Testbed:
     def _send_bootfiles(self, mode):
         print(f"Sending boot files for target {self.hostid}")
         if mode == "normal":
-            subprocess.run(["ssh", f"customboot@{self.hal_hostname}", "customboot-build"],
-                stdin=subprocess.DEVNULL)
+            subprocess.run(
+                ["ssh", f"customboot@{self.hal_hostname}", "customboot-build"],
+                stdin=subprocess.DEVNULL,
+            )
         elif mode == "custom":
-            with subprocess.Popen(["tar", "c", "-C", f"/srv/tftp/test{self.hostid}", "."],
-                    stdout=subprocess.PIPE) as p:
-                subprocess.run(["ssh", f"customboot@{self.hal_hostname}", "customboot-build"],
-                    stdin=p.stdout)
+            with subprocess.Popen(
+                ["tar", "c", "-C", f"/srv/tftp/test{self.hostid}", "."],
+                stdout=subprocess.PIPE,
+            ) as p:
+                subprocess.run(
+                    [
+                        "ssh",
+                        f"customboot@{self.hal_hostname}",
+                        "customboot-build",
+                    ],
+                    stdin=p.stdout,
+                )
 
     def _update_stripes(self, mode):
         subprocess.run(["stripes", str(self.hostid), mode])
@@ -165,14 +311,15 @@ class Testbed:
             os.remove(f"{bootconfdir}/testbed{self.hostid}-default")
         except FileNotFoundError:
             pass
-        os.symlink(f"env-boot-{mode}",
-            f"{bootconfdir}/testbed{self.hostid}-default")
+        os.symlink(f"env-boot-{mode}", f"{bootconfdir}/testbed{self.hostid}-default")
         try:
             os.remove(f"{ipxeconfdir}/testbed{self.hostid}-default.ipxe")
         except FileNotFoundError:
             pass
-        os.symlink(f"env-boot-{mode}",
-            f"{ipxeconfdir}/testbed{self.hostid}-default.ipxe")
+        os.symlink(
+            f"env-boot-{mode}",
+            f"{ipxeconfdir}/testbed{self.hostid}-default.ipxe",
+        )
         print("done")
 
         if self.config.get("send-bootfiles", False):
@@ -190,20 +337,24 @@ class Testbed:
             action_opt = "-o" if action == "poweron" else "-f"
             subprocess.check_call(["sispmctl", "-D", devid, action_opt, socket])
         elif method == "shelly":
+            # keep this import scope small, it takes 400ms+ to import it
+            import requests
+
             if action not in ("poweron", "poweroff"):
                 return
             ip, port = args[0:2]
             auth = None
             if len(args) > 2:
-                auth = requests.auth.HTTPDigestAuth('admin', args[2])
-            r = requests.post(f"http://{ip}:{port}/rpc", auth=auth, json={
-                "id": 0,
-                "method": "Switch.Set",
-                "params": {
-                    "id":0,
-                    "on": action != "poweroff"
-                }
-            })
+                auth = requests.auth.HTTPDigestAuth("admin", args[2])
+            r = requests.post(
+                f"http://{ip}:{port}/rpc",
+                auth=auth,
+                json={
+                    "id": 0,
+                    "method": "Switch.Set",
+                    "params": {"id": 0, "on": action != "poweroff"},
+                },
+            )
             r.raise_for_status()
         elif method == "wol":
             if action == "poweroff":
@@ -218,48 +369,189 @@ class Testbed:
             time.sleep(3)
             iface, *mac = args
             mac = ":".join(mac)
-            subprocess.check_call([
-                "ssh", f"service-control@{self.hal_hostname}",
-                "sudo", "ether-wake", "-i", iface, mac])
+            subprocess.check_call(
+                [
+                    "ssh",
+                    f"service-control@{self.hal_hostname}",
+                    "sudo",
+                    "ether-wake",
+                    "-i",
+                    iface,
+                    mac,
+                ]
+            )
         elif method in ("hal-button", "hal-wake-button", "hal-poweron-button"):
-            if (action == "poweroff" or
-                (method == "hal-wake-button" and action != "wake") or
-                (method == "hal-poweron-button" and action != "poweron")
+            if (
+                action == "poweroff"
+                or (method == "hal-wake-button" and action != "wake")
+                or (method == "hal-poweron-button" and action != "poweron")
             ):
                 return
-            time.sleep(3)
-            subprocess.check_call([
-                "ssh", f"control@{self.hal_hostname}", "power"])
+            time.sleep(4)
+            subprocess.check_call(["ssh", f"control@{self.hal_hostname}", "power"])
         elif method == "boot-menu":
             if action != "poweron" or self.get_current_mode() != "custom":
                 return
-            subprocess.check_call([
-                "ssh", f"console@{self.hal_hostname}", "boot-menu-interact", "USB"],
-                stdout=subprocess.DEVNULL)
+            subprocess.check_call(
+                [
+                    "ssh",
+                    f"console@{self.hal_hostname}",
+                    "boot-menu-interact",
+                    "USB",
+                ],
+                stdout=subprocess.DEVNULL,
+            )
         elif method == "wifi":
             if action != "poweron" and action != "poweroff":
                 return
-            subprocess.check_call([
-                "ssh", f"service-control@{self.hal_hostname}", "service-control", "wifi",
-                "start" if action == "poweron" else "stop"],
-                stdout=subprocess.DEVNULL)
+            subprocess.check_call(
+                [
+                    "ssh",
+                    f"service-control@{self.hal_hostname}",
+                    "service-control",
+                    "wifi",
+                    "start" if action == "poweron" else "stop",
+                ],
+                stdout=subprocess.DEVNULL,
+            )
+        elif method == "sleep-poweron":
+            if action != "poweron":
+                return
+            time.sleep(int(args[0]))
         else:
             raise NotImplementedError(f"Unknown power method {method}")
 
     def _has_gitlab(self):
         return self.config.get("gitlab", False)
 
+    def _load_ubus_config(self):
+        if self._ubus_config:
+            return
+        configpath = os.path.join(configdir, f"ubus.conf")
+        with open(configpath, "r") as f:
+            self._ubus_config = tomlkit.load(f)
+
+    def _ubus_call(self, path, method, **kwargs):
+        assert self._ubus_config
+        # keep this import scope small, it takes 400ms+ to import it
+        import requests
+
+        r = requests.post(
+            self._ubus_config["api-url"],
+            json={
+                "method": "call",
+                "params": [self._ubus_session, path, method, kwargs],
+                "jsonrpc": "2.0",
+                "id": 0,
+            },
+            verify=self._ubus_config["ca-cert"],
+        )
+        r.raise_for_status()
+        r_json = r.json()
+        if "error" in r_json:
+            raise Exception(
+                f"Method {path}/{method} failed with error {r_json['error']}"
+            )
+        result = r_json["result"]
+        if result[0] != 0:
+            raise UbusError(result[0])
+        if len(result) > 1:
+            return result[1]
+        else:
+            return {}
+
+    def _ubus_login(self):
+        self._load_ubus_config()
+        self._ubus_session = self._ubus_call(
+            "session",
+            "login",
+            username=self._ubus_config["username"],
+            password=self._ubus_config["password"],
+        )["ubus_rpc_session"]
+
+    def target_ip_list(self):
+        results = []
+        results += socket.getaddrinfo(
+            f"test-{self.hostid}.testnet", None, socket.AF_UNSPEC
+        )
+        results += socket.getaddrinfo(self.hal_hostname, None, socket.AF_UNSPEC)
+        return list(set(result[4][0] for result in results))
+
+    def _firewall_reload(self):
+        self._ubus_call("uci", "commit", config="firewall")
+        self._ubus_call(
+            "file", "exec", command="/etc/init.d/firewall", params=["reload"]
+        )
+
+    def firewall_allow_user(self, user: User):
+        if not user.get_ip():
+            return
+        self._ubus_login()
+        rule_name = f"user-{user.name}-host-{self.hostid}"
+        self._ubus_call(
+            "uci",
+            "add",
+            config="firewall",
+            type="rule",
+            section=rule_name,
+            values=(
+                self._ubus_config["rule-template"]
+                | {
+                    "src_ip": user.get_ip(),
+                    "dest_ip": self.target_ip_list(),
+                    "name": rule_name,
+                }
+            ),
+        )
+        self._firewall_reload()
+
+    def firewall_deny_user(self, user: User):
+        if not user.get_ip():
+            return
+        self._ubus_login()
+        rule_name = f"user-{user.name}-host-{self.hostid}"
+        try:
+            self._ubus_call(
+                "uci",
+                "delete",
+                config="firewall",
+                type="rule",
+                match={"name": rule_name},
+            )
+            self._firewall_reload()
+        except UbusError as e:
+            # ignore UBUS_STATUS_NOT_FOUND
+            if e.code != 4:
+                raise
+
     def get_current_claim(self):
         claimfile = os.path.join(bootconfdir, f"testbed{self.hostid}-claim")
         if os.path.exists(claimfile):
-            with open(claimfile, 'r') as f:
+            with open(claimfile, "r") as f:
                 return f.readline().strip()
         return None
 
-    def claim(self, claim):
-        claimfile = os.path.join(bootconfdir, f"testbed{self.hostid}-claim")
+    def check_claim(self, user: User):
+        """Check if the host is claimed by given user"""
+        current_claim = self.get_current_claim()
+        if not current_claim:
+            return False
+        return str(user) == current_claim.split(":")[0]
+
+    def _normalize_claim(self, user: User, claim) -> str:
         if claim not in ["gitlab", "openqa", "manual"]:
             raise ValueError(f"Unsupported claim: {claim}")
+        if claim in ["gitlab", "openqa"]:
+            if not user or not user.is_ci_user():
+                raise ValueError(f"User {user} is not a CI user")
+            claim = f"{user}:{claim}"
+        else:
+            claim = str(user or claim)
+        return claim
+
+    def claim(self, user: User, claim, force: bool = False):
+        claimfile = os.path.join(bootconfdir, f"testbed{self.hostid}-claim")
+        claim = self._normalize_claim(user, claim)
 
         # resolve deadlock between openqa and gitlab
         # when openqa is trying to claim the host, but gitlab is starting a job
@@ -271,11 +563,11 @@ class Testbed:
         # when that happens, allow gitlab to claim the host and continue, even
         # though somebody else is already waiting for the host - gitlab jobs
         # are only a few minutes long, so it's better this way
-        if claim == 'gitlab':
+        if claim.endswith(":gitlab"):
             try:
                 lock_owner = Lock.get_lock_owner(f"claim-{self.hostid}")
-                if lock_owner == "openqa":
-                    with open(claimfile, 'w') as f:
+                if lock_owner.endswith(":openqa"):
+                    with open(claimfile, "w") as f:
                         f.write(claim)
                     return
             except FileNotFoundError:
@@ -287,57 +579,104 @@ class Testbed:
             if current_claim == claim:
                 return
 
-            if current_claim:
-                raise PermissionError(f"Testbed {self.hostid} already claimed by {current_claim}")
+            if current_claim and not force:
+                raise PermissionError(
+                    f"Testbed {self.hostid} already claimed by {current_claim}"
+                )
 
-            if claim != "gitlab" and self._has_gitlab():
+            if not claim.endswith(":gitlab") and self._has_gitlab():
                 try:
-                    subprocess.run(["ssh", f"service-control@{self.hal_hostname}",
-                                    "service-control gitlab stop"],
-                                   check=True)
+                    subprocess.run(
+                        [
+                            "ssh",
+                            f"service-control@{self.hal_hostname}",
+                            "service-control gitlab stop",
+                        ],
+                        check=True,
+                    )
                 except subprocess.CalledProcessError as e:
                     if e.returncode == 127:
-                        subprocess.run(["ssh", f"service-control@{self.hal_hostname}",
-                            "sudo systemctl stop gitlab-runner.service"])
+                        subprocess.run(
+                            [
+                                "ssh",
+                                f"service-control@{self.hal_hostname}",
+                                "sudo systemctl stop gitlab-runner.service",
+                            ]
+                        )
 
-            if claim != "openqa":
+            if not claim.endswith(":openqa"):
                 try:
-                    subprocess.run(["ssh", f"service-control@{self.hal_hostname}",
-                                    "service-control openqa stop"],
-                                   check=True)
+                    subprocess.run(
+                        [
+                            "ssh",
+                            f"service-control@{self.hal_hostname}",
+                            "service-control openqa stop",
+                        ],
+                        check=True,
+                    )
                 except subprocess.CalledProcessError as e:
                     if e.returncode == 127:
-                        subprocess.run(["ssh", f"service-control@{self.hal_hostname}",
-                            "sudo systemctl stop openqa-worker.target openqa-worker-cacheservice-minion.service"])
+                        subprocess.run(
+                            [
+                                "ssh",
+                                f"service-control@{self.hal_hostname}",
+                                "sudo systemctl stop openqa-worker.target openqa-worker-cacheservice-minion.service",
+                            ]
+                        )
 
-            with open(claimfile, 'w') as f:
+            self.firewall_allow_user(user)
+
+            with open(claimfile, "w") as f:
                 f.write(claim)
 
-    def release(self, claim):
+    def release(self, user: User | None, claim, force: bool = False):
         claimfile = os.path.join(bootconfdir, f"testbed{self.hostid}-claim")
+        claim = self._normalize_claim(user, claim)
         current_claim = self.get_current_claim()
 
-        if current_claim != claim:
+        if current_claim != claim and not force:
             raise PermissionError(f"Currently in use by {current_claim}, not {claim}")
 
-        if claim != "gitlab" and self._has_gitlab():
+        self.firewall_deny_user(user)
+
+        if not claim.endswith(":gitlab") and self._has_gitlab():
             try:
-                subprocess.run(["ssh", f"service-control@{self.hal_hostname}",
-                                "service-control gitlab start"],
-                               check=True)
+                subprocess.run(
+                    [
+                        "ssh",
+                        f"service-control@{self.hal_hostname}",
+                        "service-control gitlab start",
+                    ],
+                    check=True,
+                )
             except subprocess.CalledProcessError as e:
                 if e.returncode == 127:
-                    subprocess.run(["ssh", f"service-control@{self.hal_hostname}",
-                        "sudo systemctl start gitlab-runner.service"])
-        if claim != "openqa":
+                    subprocess.run(
+                        [
+                            "ssh",
+                            f"service-control@{self.hal_hostname}",
+                            "sudo systemctl start gitlab-runner.service",
+                        ]
+                    )
+        if not claim.endswith(":openqa"):
             try:
-                subprocess.run(["ssh", f"service-control@{self.hal_hostname}",
-                                "service-control openqa start"],
-                               check=True)
+                subprocess.run(
+                    [
+                        "ssh",
+                        f"service-control@{self.hal_hostname}",
+                        "service-control openqa start",
+                    ],
+                    check=True,
+                )
             except subprocess.CalledProcessError as e:
                 if e.returncode == 127:
-                    subprocess.run(["ssh", f"service-control@{self.hal_hostname}",
-                        "sudo systemctl start openqa-worker.target openqa-worker-cacheservice-minion.service"])
+                    subprocess.run(
+                        [
+                            "ssh",
+                            f"service-control@{self.hal_hostname}",
+                            "sudo systemctl start openqa-worker.target openqa-worker-cacheservice-minion.service",
+                        ]
+                    )
 
         os.remove(claimfile)
 
@@ -373,36 +712,153 @@ class Testbed:
         with Lock(f"console-{self.hostid}"):
             console_type = self.config.get("console")
             if console_type.startswith("hal-picocom-AMA"):
-                dev_suffix = console_type[len("hal-picocom-"):]
-                subprocess.run(["ssh", "-t", f"console@{self.hal_hostname}",
-                                "picocom", "--send-cmd=false", "--receive-cmd=false", "-b", "115200", "/dev/tty" + dev_suffix])
+                dev_suffix = console_type[len("hal-picocom-") :]
+                subprocess.run(
+                    [
+                        "ssh",
+                        "-t",
+                        f"console@{self.hal_hostname}",
+                        "picocom",
+                        "--send-cmd=false",
+                        "--receive-cmd=false",
+                        "-b",
+                        "115200",
+                        "/dev/tty" + dev_suffix,
+                    ]
+                )
             elif console_type == "hal-connect-USB0":
-                subprocess.run(["ssh", "-t", f"console@{self.hal_hostname}",
-                                "connect-serial-console", "/dev/ttyUSB0"])
+                subprocess.run(
+                    [
+                        "ssh",
+                        "-t",
+                        f"console@{self.hal_hostname}",
+                        "connect-serial-console",
+                        "/dev/ttyUSB0",
+                    ]
+                )
             elif console_type == "local":
                 console_device = f"/dev/console-test{self.hostid}"
                 if not os.path.exists(console_device):
-                    raise NotImplementedError(f"Console for test{self.hostid} is not connected")
-                subprocess.run(["picocom", "--send-cmd=false", "--receive-cmd=false","-b", "115200", console_device])
+                    raise NotImplementedError(
+                        f"Console for test{self.hostid} is not connected"
+                    )
+                subprocess.run(
+                    [
+                        "picocom",
+                        "--send-cmd=false",
+                        "--receive-cmd=false",
+                        "-b",
+                        "115200",
+                        console_device,
+                    ]
+                )
             else:
                 raise NotImplementedError("Console not supported for this host")
 
     def vncstart(self):
-        kvm_services = self.config.get("kvm-services",
-            "kvmd-otg.service kvmd.service kvmd-vnc.service").split()
+        kvm_services = self.config.get(
+            "kvm-services", "kvmd-otg.service kvmd.service kvmd-vnc.service"
+        ).split()
         if not kvm_services:
             raise NotImplementedError("KVM / VNC not supported for this host")
-        subprocess.run(["ssh", f"service-control@{self.hal_hostname}",
-                        "sudo", "systemctl", "start", *kvm_services])
+        subprocess.run(
+            [
+                "ssh",
+                f"service-control@{self.hal_hostname}",
+                "sudo",
+                "systemctl",
+                "start",
+                *kvm_services,
+            ]
+        )
         print(f"Listening on 172.16.{self.hostid}.2:5900")
 
     def vncstop(self):
-        kvm_services = self.config.get("kvm-services",
-            "kvmd-otg.service kvmd.service kvmd-vnc.service").split()
+        kvm_services = self.config.get(
+            "kvm-services", "kvmd-otg.service kvmd.service kvmd-vnc.service"
+        ).split()
         if not kvm_services:
             raise NotImplementedError("KVM / VNC not supported for this host")
-        subprocess.run(["ssh", f"service-control@{self.hal_hostname}",
-                        "sudo", "systemctl", "stop", *kvm_services])
+        subprocess.run(
+            [
+                "ssh",
+                f"service-control@{self.hal_hostname}",
+                "sudo",
+                "systemctl",
+                "stop",
+                *kvm_services,
+            ]
+        )
+
+    def _inject_ssh_target(
+        self, command_prefix: list[str], path_prefix: str, user: User
+    ):
+        try:
+            with subprocess.Popen(
+                command_prefix
+                + ["tee", "-a", f"{path_prefix}/root/.ssh/authorized_keys"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+            ) as proc:
+                for key in user.get_user_ssh_keys():
+                    proc.stdin.write(f"{key}\n".encode())
+            subprocess.run(
+                command_prefix + ["mkdir", "-p", f"{path_prefix}/home/user/.ssh"],
+                check=True,
+            )
+            with subprocess.Popen(
+                command_prefix
+                + [
+                    "tee",
+                    "-a",
+                    f"{path_prefix}/home/user/.ssh/authorized_keys",
+                ],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+            ) as proc:
+                for key in user.get_user_ssh_keys():
+                    proc.stdin.write(f"{key}\n".encode())
+            subprocess.run(
+                command_prefix
+                + ["chown", "-R", "user:user", f"{path_prefix}/home/user/.ssh"],
+                check=True,
+            )
+        except subprocess.CalledProcessError as e:
+            print(f"Failed to inject SSH key, command {e.cmd} failed")
+            sys.exit(1)
+
+    def inject_ssh(self, user: User):
+        command_prefix = [
+            "ssh",
+            "-o",
+            "UserKnownHostsFile=/dev/null",
+            "-o",
+            "StrictHostKeyChecking=no",
+            "-o",
+            "LogLevel=error",
+            f"root@test-{self.hostid}.testnet",
+        ]
+        # check if it's running qubes system, or rescue one
+        proc = subprocess.run(command_prefix + ["test", "-S", "/run/qubesd.sock"])
+        if proc.returncode == 0:
+            # it's qubes, insert pubkey directly
+            self._inject_ssh_target(command_prefix, "", user)
+        else:
+            # it's rescue, mount the disk first
+            script_open = [
+                "dev=$(blkid -t TYPE=crypto_LUKS -o device)",
+                "cryptsetup open luks $dev <<<'lukspass'",
+                "lvchange -ay qubes_dom0/root",
+                "mkdir -p /mnt/sysimage-ssh",
+                "mount /dev/qubes_dom0/root /mnt/sysimage=ssh",
+            ]
+            subprocess.run(command_prefix + [" && ".join(script_open)], check=True)
+            self._inject_ssh_target(command_prefix, "/mnt/sysimage-ssh", user)
+            script_close = [
+                "umount /mnt/sysimage-ssh" "vgchange -an",
+                "cryptsetup close luks",
+            ]
+            subprocess.run(command_prefix + [" && ".join(script_close)], check=True)
 
     def hostkey(self):
         # TODO: change print to logging?
@@ -412,16 +868,43 @@ class Testbed:
         print(f"Listing {img_path}:")
         subprocess.run(["ls", "-l", img_path])
 
-        if not os.path.exists(extracted_path) or os.path.getmtime(img_path) > os.path.getmtime(extracted_path):
+        if not os.path.exists(extracted_path) or os.path.getmtime(
+            img_path
+        ) > os.path.getmtime(extracted_path):
             subprocess.run(["rm", "-rf", os.path.join(rescuedir, "initrd")])
             os.makedirs(os.path.join(rescuedir, "initrd"), exist_ok=True)
-            subprocess.run(["unmkinitramfs", img_path, os.path.join(rescuedir, "initrd")])
-            with open(extracted_path, 'w') as f:
-                f.write('')
+            subprocess.run(
+                ["unmkinitramfs", img_path, os.path.join(rescuedir, "initrd")]
+            )
+            with open(extracted_path, "w") as f:
+                f.write("")
 
-        for key_file in os.listdir(os.path.join(rescuedir, "initrd", "main", "etc", "dropbear")):
+        for key_file in os.listdir(
+            os.path.join(rescuedir, "initrd", "main", "etc", "dropbear")
+        ):
             if key_file.startswith("dropbear_") and key_file.endswith("_host_key"):
-                subprocess.run(["dropbearkey", "-y", "-f", os.path.join(rescuedir, "initrd", "main", "etc", "dropbear", key_file)])
+                subprocess.run(
+                    [
+                        "dropbearkey",
+                        "-y",
+                        "-f",
+                        os.path.join(
+                            rescuedir,
+                            "initrd",
+                            "main",
+                            "etc",
+                            "dropbear",
+                            key_file,
+                        ),
+                    ]
+                )
+
+    def get_selected_ssh_keys(self) -> str:
+        claim = self.get_current_claim()
+        if not claim:
+            return ""
+        user = User(claim.split(":")[0])
+        return "\n".join(user.get_user_ssh_keys())
 
 
 def cmd_status(testbed):
@@ -433,11 +916,30 @@ def cmd_status(testbed):
     print(dedent(status_msg))
 
 
+def cmd_status_all(user: User, current: Testbed):
+    fmt = "{current}{hostid:<5}{claim:<15}{bootmode:<15}"
+    print(fmt.format(current=" ", hostid="Host", claim="User", bootmode="Bootmode"))
+    for target in sorted(user.get_allowed_targets()):
+        testbed = Testbed(target)
+        print(
+            fmt.format(
+                current=("*" if current.hostid == target else " "),
+                hostid=target,
+                claim=testbed.get_current_claim() or "",
+                bootmode=testbed.get_current_mode() or "",
+            )
+        )
+
+
 def cmd_help(testbed):
     help_msg = """\
+    First command may be a number - to select which host to operate on.
+
     Ownership commands:
-      claim:NAME    - claim the machine for given service (gitlab, openqa, manual)
-      release:NAME  - release claimed machine - name must match the current claim
+      claim         - claim the machine for manual use
+      claim:NAME    - claim the machine for given CI service (gitlab, openqa)
+      release       - release claimed machine
+      release:NAME  - release CI-claimed machine - name must match the current claim
 
     Boot commands (switches only on next boot):
       rescue     - rescue system (doesn't load anything from the disk)
@@ -455,31 +957,90 @@ def cmd_help(testbed):
 
     Connection commands:
       status     - print target status
+      status-all - print status of all allowed targets
+      set-default - set the currently selected target host as default
       hostkey    - print SSH hostkey used by the rescue system
       console    - get serial console (if available)
-      vnc:start  - start VNC proxy for HDMI with USB keyboard/mouse input; do not use when openqa is running
-      vnc:stop   - stop VNC proxy"""
+      vnc:start  - start VNC proxy for HDMI with USB keyboard/mouse input;
+                   do not use when openqa is running
+      vnc:stop   - stop VNC proxy
+      inject-ssh - inject user's SSH keys into running system installed by CI;
+                   requires system already started in 'normal' or 'rescue' mode"""
     print(dedent(help_msg))
     cmd_status(testbed)
     sys.exit(0)
 
+
 def setup_logging():
-    ha_syslog = logging.handlers.SysLogHandler('/dev/log')
-    ha_syslog.setFormatter(
-        logging.Formatter('%(name)s[%(process)d]: %(message)s'))
+    ha_syslog = logging.handlers.SysLogHandler("/dev/log")
+    ha_syslog.setFormatter(logging.Formatter("%(name)s[%(process)d]: %(message)s"))
     logging.root.addHandler(ha_syslog)
     logging.root.setLevel("INFO")
+
+
+def get_control_ssh_keys():
+    self_path = __file__
+    for user_conf in (configdir / "users").glob("*.conf"):
+        user = User(user_conf.with_suffix("").name)
+        for key in user.get_user_ssh_keys():
+            yield f'restrict,pty,command="sudo {self_path} {user.name} ssh" {key}'
+
 
 def main():
     setup_logging()
     if len(sys.argv) < 2:
         print("Usage: testbed-control hostid commands...", file=sys.stderr)
+        print("Usage: testbed-control username ssh", file=sys.stderr)
+        print("Usage: testbed-control get-control-keys", file=sys.stderr)
         sys.exit(1)
 
+    if len(sys.argv) == 2 and sys.argv[1] == "get-control-keys":
+        print("\n".join(get_control_ssh_keys()))
+        return
+
+    if len(sys.argv) > 2 and sys.argv[2] == "ssh":
+        commands = os.environ.get("SSH_ORIGINAL_COMMAND", "").split()
+        username = sys.argv[1]
+        try:
+            user = User(username)
+        except KeyError:
+            print(f"No such user: {username}", file=sys.stderr)
+            sys.exit(1)
+    else:
+        commands = sys.argv[1:]
+        user = None
+        username = None
+
+    target = None
+    target_options = ""
     try:
-        target = int(sys.argv[1])
-    except ValueError:
-        print(f"Invalid target {sys.argv[1]}, must be a number!", file=sys.stderr)
+        target_str = commands[0]
+        if ":" in target_str:
+            target_str, target_options = commands[0].split(":", 1)
+        target = int(target_str)
+        commands = commands[1:]
+    except (ValueError, IndexError):
+        if user is not None:
+            target = user.get_default_target()
+        else:
+            print(
+                f"Invalid target {sys.argv[1]}, must be a number!",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+    if target is None:
+        print(
+            f"No target provided and no default for user {username}!",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if user and not user.check_target_access(target):
+        print(
+            f"User {username} has no access to target {target}!",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     try:
@@ -488,20 +1049,41 @@ def main():
         print(f"No such host: {target}!", file=sys.stderr)
         sys.exit(1)
 
-    if len(sys.argv) > 2 and sys.argv[2] == "ssh":
-        commands = os.environ.get("SSH_ORIGINAL_COMMAND", "").split()
-    else:
-        commands = sys.argv[2:]
-
     if not commands:
         cmd_help(testbed)
 
     for cmd in commands:
         testbed.log.info("command: %s", cmd)
+        # verify if target is claimed by this user
+        if cmd not in [
+            "help",
+            "status",
+            "status-all",
+            "claim",
+            "set-default",
+        ] and not cmd.startswith("claim:"):
+            if user and not testbed.check_claim(user):
+                if target_options == "force" and user.is_admin():
+                    print(
+                        f"Using admin powers to access {target} !",
+                        file=sys.stderr,
+                    )
+                else:
+                    print(
+                        f"Target {target} not claimed by user {user}!",
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
         if cmd == "help":
             cmd_help(testbed)
         elif cmd == "status":
             cmd_status(testbed)
+        elif cmd == "status-all":
+            cmd_status_all(user, testbed)
+        elif cmd == "set-default":
+            user.set_default_target(target)
+        elif cmd == "print-target-ssh-keys":
+            print("\n".join(testbed.get_selected_ssh_keys()))
         elif cmd == "reset":
             testbed.reset()
         elif cmd == "poweron":
@@ -526,10 +1108,16 @@ def main():
             testbed.wake()
         elif cmd == "console":
             testbed.console()
+        elif cmd == "inject-ssh":
+            testbed.inject_ssh(user)
+        elif cmd == "claim":
+            testbed.claim(user, "manual", force=target_options == "force")
+        elif cmd == "release":
+            testbed.release(user, "manual", force=target_options == "force")
         elif cmd.startswith("claim:"):
-            testbed.claim(cmd.split(":")[1])
+            testbed.claim(user, cmd.split(":")[1])
         elif cmd.startswith("release:"):
-            testbed.release(cmd.split(":")[1])
+            testbed.release(user, cmd.split(":")[1])
         elif cmd == "vnc:start":
             testbed.vncstart()
         elif cmd == "vnc:stop":
@@ -537,6 +1125,7 @@ def main():
         else:
             print(f"Invalid command '{cmd}'")
             sys.exit(1)
+
 
 if __name__ == "__main__":
     try:
