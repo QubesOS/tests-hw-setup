@@ -48,3 +48,5 @@ base:
     - hal9019
   hal9020:
     - hal9020
+  hal9021:
+    - hal9021
