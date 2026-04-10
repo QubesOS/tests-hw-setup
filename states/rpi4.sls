@@ -34,7 +34,12 @@ move-boot:
   file.managed:
     - contents: |
         dtoverlay=dwc2,dr_mode=peripheral
+{%- if 'Raspberry Pi Compute Module 4' in salt['grains.get']('productname') %}
+        dtoverlay=tc358743,4lane=1
+        dtoverlay=tc358743-audio
+{%- else %}
         dtoverlay=tc358743
+{%- endif %}
         dtoverlay=disable-bt
         dtoverlay={{ salt['pillar.get']('uart', 'uart5') }}
         kernel=kernel8.img
@@ -44,10 +49,16 @@ move-boot:
     - require:
       - cmd: move-boot
 
+{% if salt['pillar.get']('openqa:worker:serial') == 'ttyAMA0' %}
+{% set console = 'console=tty0' %}
+{% else %}
+{% set console = 'console=ttyAMA0,115200n8' %}
+{% endif %}
+
 /boot/vc-manual/cmdline-linux.txt:
   file.managed:
     - contents: |
-        root=/dev/mmcblk0p3 loglevel=3 splash=silent plymouth.enable=0 console=ttyAMA0,115200n8 net.ifnames=0 cma=128M
+        root=/dev/mmcblk0p3 loglevel=3 splash=silent plymouth.enable=0 {{ console }} net.ifnames=0 cma=128M
     - require:
       - cmd: move-boot
 

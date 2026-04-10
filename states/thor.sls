@@ -322,7 +322,7 @@ test{{hostid}}:
   - context:
       hostid: {{hostid}}
       power: {{hosts[host].get("power", "")}}
-      {% if hosts[host].get("mac", "") -%}
+      {% if hosts[host].get("mac", "") and not hosts[host].get("send-bootfiles", False) -%}
       send_bootfiles: False
       {% else -%}
       send_bootfiles: True

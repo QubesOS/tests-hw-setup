@@ -17,6 +17,9 @@ console:
   file.managed:
     - contents: |
         # workaround https://github.com/systemd/systemd/issues/39056
+        {% if salt['pillar.get']('openqa:worker:serial') == 'ttyAMA0' -%}
+        ACTION=="add", KERNEL=="ttyAMA0", RUN+="/bin/chown console:_openqa-worker %N"
+        {% endif -%}
         ACTION=="add", KERNEL=="ttyAMA1", RUN+="/bin/chown console:_openqa-worker %N"
         ACTION=="add", KERNEL=="ttyAMA4", RUN+="/bin/chown console:_openqa-worker %N"
         ACTION=="add", KERNEL=="ttyAMA5", RUN+="/bin/chown console:_openqa-worker %N"
