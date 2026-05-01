@@ -110,8 +110,8 @@ fi
 
 # check if there is enough free space left for the snapshot to be useful
 if [ -n "\$found" ]; then
-    while ! vgchange -ay --ignoremonitoring --select 'lv_name = "root-pool"'; do sleep 1; done
-    used_percentage=\$(LC_ALL=C lvs -o data_percent --noheadings --select 'lv_name = "root-pool"')
+    while ! vgchange -ay --ignoremonitoring --select 'lv_name =~ "root-pool|vm-pool"'; do sleep 1; done
+    used_percentage=\$(LC_ALL=C lvs -o data_percent --noheadings --select 'lv_name =~ "root-pool|vm-pool"')
 fi
 
 # close LUKS/LVM before exit paths
@@ -130,12 +130,12 @@ if [ -z "\$found" ]; then
 fi
 
 # use awk as bash do only integers...
-if ! awk "BEGIN { exit (\$used_percentage > 75) }"; then
-    echo "Snapshot exists, but root pool is \${used_percentage}% full, doing reinstall anyway"
+if ! awk "\\\$1 > 75 { exit 1 }" <<<"\$used_percentage"; then
+    echo "Snapshot exists, but pools are \${used_percentage}% full, doing reinstall anyway"
     exit 1
 fi
 
-echo "Snapshot ok, root pool is \${used_percentage}% full"
+echo "Snapshot ok, pools are \${used_percentage}% full"
 EOF
 }
 
