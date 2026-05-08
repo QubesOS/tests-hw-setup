@@ -68,16 +68,22 @@ dnsmasq:
         RestartSec=3s
     - makedirs: True
 
-# needed for /etc/init.d/boot.local
+
 systemd-sysvcompat:
-  pkg.installed: []
+  pkg.removed: []
 
 /etc/init.d/boot.local:
+  file.absent: []
+
+/usr/local/bin/startup-misc:
   file.managed:
     - contents: |
         #!/bin/sh
 
         modprobe nf_tables
+        modprobe nf_nat
+        modprobe nft_chain_nat
+
         nft add table nat
         nft 'add chain nat postrouting { type nat hook postrouting priority 100 ; }'
         nft add rule nat postrouting masquerade
@@ -89,3 +95,21 @@ systemd-sysvcompat:
 
     - makedirs: True
     - mode: 0755
+
+/etc/systemd/system/startup-misc.service:
+  file.managed:
+    - contents: |
+        [Unit]
+        [Service]
+        ExecStart=/usr/local/bin/startup-misc
+        RemainAfterExit=true
+        [Install]
+        WantedBy=multi-user.target
+    - makedirs: True
+
+startup-misc.service:
+  service.running:
+  - require:
+    - file: /etc/systemd/system/startup-misc.service
+    - file: /usr/local/bin/startup-misc
+  - enable: True
