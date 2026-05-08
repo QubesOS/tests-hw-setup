@@ -1,3 +1,6 @@
+{% set pythonver = (salt['grains.get']('pythonversion') | map('string') | list)[0:2] | join('') %}
+{% set pythonprefix = "python" + pythonver %}
+
 /usr/lib/sysusers.d/kvmd.conf:
   file.managed:
     - contents: |
@@ -46,6 +49,28 @@ kvmd-static-deps:
       - speex-devel
       - libopus-devel
       - libjansson-devel
+      - python3-gpiod
+      - {{pythonprefix}}-Pygments
+      - {{pythonprefix}}-setuptools
+      - {{pythonprefix}}-aiofiles
+      - {{pythonprefix}}-PyYAML
+      - {{pythonprefix}}-aiohttp
+      - {{pythonprefix}}-devel
+      - {{pythonprefix}}-python-xlib
+      - {{pythonprefix}}-passlib
+      - {{pythonprefix}}-Pillow
+      - {{pythonprefix}}-setproctitle
+      - {{pythonprefix}}-pyotp
+      - {{pythonprefix}}-dbus_next
+      - {{pythonprefix}}-systemd
+      - {{pythonprefix}}-zstandard
+      - {{pythonprefix}}-psutil
+      - {{pythonprefix}}-pipx
+      - {{pythonprefix}}-pip
+      - {{pythonprefix}}-netifaces
+      - {{pythonprefix}}-async-lru
+      - {{pythonprefix}}-build
+      - {{pythonprefix}}-evdev
 
 kvmd-deps:
   pkg.installed:
@@ -54,28 +79,6 @@ kvmd-deps:
       - pkg: kvmd-static-deps
     - pkgs:
       - openssl-devel
-      - python3-pygments
-      - python3-setuptools
-      - python3-aiofiles
-      - python3-PyYAML
-      - python3-aiohttp
-      - python3-devel
-      - python3-xlib
-      - python3-passlib
-      - python3-Pillow
-      - python3-setproctitle
-      - python3-gpiod
-      - python3-pyotp
-      - python3-dbus_next
-      - python3-systemd
-      - python3-zstandard
-      - python3-psutil
-      - python3-pipx
-      - python3-pip
-      - python3-netifaces
-      - python3-async-lru
-      - python3-build
-      - python3-evdev
 
 
 /var/lib/pikvm-sources:
